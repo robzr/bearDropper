@@ -27,60 +27,51 @@
 #   list   whitelist		10.0.1.0/24
 #   list   whitelist		192.168.1.0/24
 
-# Number of failure attempts from a given IP required to trigger a ban
-attemptCount=`uci -q get bearDropper.@[0].attemptCount`		|| attemptCount=3
-
+# Args: variable_name (also used for uci option name), default_value
 uciLoad () {
-  local varName="$1"
-  l  local varName="$1"c  local varName="$1"w
+  local uciSection='bearDropper.@[0]'
+  local getUci
+  getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
+  eval $1=\'$getUci\'
 }
-uciSection='bearDropper.@[0]'
 
-uciLoad attemptCount 3  # 
+uciLoad attemptCount 3    # Failure attempts from a given IP required to trigger a ban
 
+uciLoad attemptPeriod 1d  # Time period during which attemptCount must be exceeded in order to trigger a ban
 
-# Length of time period during which attemptCount must be exceeded in order to trigger a ban
-attemptPeriod=`uci -q get bearDropper.@[0].verbose` 		|| attemptPeriod=1d
+uciLoad banLength 1w      # Length of time period during which attemptCount must be exceeded in order to trigger a ban
 
-# Length of time period during which attemptCount must be exceeded in order to trigger a ban
-banLength=`uci -q get bearDropper.@[0].verbose` 		|| banLength=1w
+uciLoad persistentBanFileWritePeriod 0  # How often to write to persistent ban file. 0 is never, otherwise the 
+					# number of seconds (or a BIND style time string) can be used to specify 
+					# minimum intervals between writes.  Consider the life of your flash 
+					# storage when setting this.  To make it write on every run when using
+					# a mode other than follow, set it to 1.
 
-# How often to write to persistent ban file. 0 is never, otherwise the number of seconds (or
-# a BIND style time string) can be used to specify minimum intervals between writes.  Consider
-# the life of your flash storage when setting this.  To make it write on every run when using
-# a mode other than follow, set it to 1.
-persistentBanFileWritePeriod=`uci -q get bearDropper.@[0].verbose` 	|| persistentBanFileWritePeriod=0
+uciLoad fileBanTemp '/tmp/bearDropper.leases'     # The ban temporary lease file
 
-# The ban temporary lease file
-fileBanTemp=`uci -q get bearDropper.@[0].fileBanTemp` 		|| fileBanTemp='/tmp/bearDropper.leases'
+uciLoad fileBanPersist '/etc/bearDropper.leases'  # The ban persistent lease file - consider
+						  # moving to USB or SD storage if available
 
-# The ban persistent lease file - consider moving to USB or SD storage if available
-fileBanPersist=`uci -q get bearDropper.@[0].fileBanPersist` 	|| fileBanPersist='/etc/bearDropper.leases'
+uciLoad followModeCheckPeriod 10m  	# Time period, when in follow mode, to check for 
+					# expired bans if there is no log activity
 
-# Time period, when in follow mode, to check for expired bans if there is no log activity
-followModeCheckPeriod=`uci -q get bearDropper.@[0].followModeCheckPeriod` || followModeCheckPeriod=10m
 
 
 # Advanced variables; it is unlikely that these will need to be changed, but just in case...
-#
 
-# Verbose output (also can be set with the -v flag)
-verbose=`uci -q get bearDropper.@[0].verbose` 			|| verbose=0
 
-# The format of the time stamp in the log file
-formatLogDate=`uci -q get bearDropper.@[0].formatLogDate` 	|| formatLogDate='%b %d %H:%M:%S %Y'
+uciLoad verbose 0   			   # Verbose output (also can be set with the -v flag)
+
+uciLoad formatLogDate '%b %d %H:%M:%S %Y'  # The format of the time stamp in the log file
 
 # Regex to look for when initially parsing out dropbear auth fail log entries
-regexLogString=`uci -q get bearDropper.@[0].regexLogString` 	|| regexLogString='^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
+uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
 
-# The firewall chain bearDropper stores firewall commands in
-firewallChain=`uci -q get bearDropper.@[0].firewallChain` 	|| firewallChain='bearDropper'
+uciLoad firewallChain 'bearDropper'        # firewall chain bearDropper stores firewall commands in
 
-# The target for a banned IP - you could use this to jump to a custom chain
-firewallTarget=`uci -q get bearDropper.@[0].firewallTarget` 	|| firewallTarget='-j DROP'
+uciLoad firewallTarget '-j DROP'	   # The target for a banned IP - you could use this to jump to a custom chain
 
-# logread command, parameters can optionally be added, ex: "logread -l100"
-cmdLogread=`uci -q get bearDropper.@[0].cmdLogread` 		|| cmdLogread='logread'
+uciLoad cmdLogread 'logread' 		   # logread command, parameters can be added, ex: "logread -l100"
 
 
 #
