@@ -3,23 +3,24 @@
 # bearDropper - dropbear log parsing ban agent for OpenWRT - Complete rewrite of dropBrute.sh 11/2015 - @robzr
 #   - No runtime dependencies other than busybox (ash) and iptables
 #   - Can use uci for (optional) configuration, but should run with no additional config
-#   - Can run continuously or periodically via cron 
+#   - Can run continuously in background or periodically via cron 
 #   - Can automatically add firewall hook, chain & rules
 #   - Can use BIND style time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
 #   - Can run in one of a few modes:
-#     "today" mode - same simplistic behavior as dropBrute.sh; simply looks at log entries from the same day, very
-#        simple and lightweight, generally run from cron periodically
+#     "today" mode (default) - same simplistic behavior as dropBrute.sh; simply looks at log entries from the 
+#        day it is being run, simple and lightweight, generally run from cron periodically
+#     "entireLog" mode - runs through entire contents of the syslog ring buffer
 #     "interval" mode - processes entries from the last # of seconds, requires more processing than "today" mode,
 #        but would respond more accurately, run from cron periodically - if you run at 10 minute intervals, you
 #        would generally want to process the last 600 seconds worth of log entries at a time.
 #     "follow" mode - follows the log file to process entries as they happen, generally run via an init script
+#   - add "logger" syslog logging to report additional 
 #        
 
-# Optional user defined variables follow - these should be set in /etc/config/bearDropper in uci syntax, ex:
+# Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
 #
-# config service bearDropper
-#   option defaultMode 		seconds
-#   option seconds 		seconds
+# config bearDropper
+#   option defaultMode 		today
 #   option attemptCount 	3
 #   option attemptPeriod 	1d
 #   option banLength    	1w
@@ -27,71 +28,76 @@
 #   list   whitelist		10.0.1.0/24
 #   list   whitelist		192.168.1.0/24
 
-# Args: variable_name (also used for uci option name), default_value
+# Loads config variables from uci - args: variable_name (also used for uci option name), default_value
 uciLoad () {
+  # test the below line
+  # local getUci uciSection='bearDropper.@[0]'
   local uciSection='bearDropper.@[0]'
   local getUci
   getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
   eval $1=\'$getUci\'
 }
 
-uciLoad attemptCount 3    # Failure attempts from a given IP required to trigger a ban
+uciLoad defaultMode today		# Mode used if no mode is specified on command line
 
-uciLoad attemptPeriod 1d  # Time period during which attemptCount must be exceeded in order to trigger a ban
+uciLoad attemptCount 3			# Failure attempts from a given IP required to trigger a ban
 
-uciLoad banLength 1w      # Length of time period during which attemptCount must be exceeded in order to trigger a ban
+uciLoad attemptPeriod 1d		# Time period during which attemptCount must be exceeded in order to 
+					# trigger a ban.
 
-uciLoad persistentBanFileWritePeriod 0  # How often to write to persistent ban file. 0 is never, otherwise the 
+uciLoad banLength 1w			# How long a a ban will exist for
+
+uciLoad persistentBanFileWritePeriod 0	# How often to write to persistent ban file. 0 is never, otherwise the 
 					# number of seconds (or a BIND style time string) can be used to specify 
 					# minimum intervals between writes.  Consider the life of your flash 
 					# storage when setting this.  To make it write on every run when using
 					# a mode other than follow, set it to 1.
 
-uciLoad fileBanTemp '/tmp/bearDropper.leases'     # The ban temporary lease file
+uciLoad fileBanTemp '/tmp/bearDropper.bans'	# The ban temporary lease file
 
-uciLoad fileBanPersist '/etc/bearDropper.leases'  # The ban persistent lease file - consider
-						  # moving to USB or SD storage if available
+uciLoad fileBanPersist '/etc/bearDropper.bans'	# The ban persistent lease file - consider
+						# moving to USB or SD storage if available
 
 uciLoad followModeCheckPeriod 10m  	# Time period, when in follow mode, to check for 
 					# expired bans if there is no log activity
 
 
+###  Advanced variables below; it is unlikely that these will need to be changed, but just in case...
 
-# Advanced variables; it is unlikely that these will need to be changed, but just in case...
+uciLoad verbose 0			# Verbose output (also can be set with the -v flag)
 
+uciLoad formatLogDate '%b %d %H:%M:%S %Y'	# The format of the syslog time stamp
 
-uciLoad verbose 0   			   # Verbose output (also can be set with the -v flag)
+uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
+									# out auth fail log entries
 
-uciLoad formatLogDate '%b %d %H:%M:%S %Y'  # The format of the time stamp in the log file
+uciLoad firewallChain 'bearDropper'	# firewall chain bearDropper stores firewall commands in
 
-# Regex to look for when initially parsing out dropbear auth fail log entries
-uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
+uciLoad firewallTarget '-j DROP'	# The target for a banned IP - you could use this to jump to a custom chain
+					# for logging, launching external commands, etc.
 
-uciLoad firewallChain 'bearDropper'        # firewall chain bearDropper stores firewall commands in
-
-uciLoad firewallTarget '-j DROP'	   # The target for a banned IP - you could use this to jump to a custom chain
-
-uciLoad cmdLogread 'logread' 		   # logread command, parameters can be added, ex: "logread -l100"
+uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tuning, ex: "logread -l250"
 
 
 #
 # Begin functions
 #
 
-isValidBindTime () { echo $1 | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
-
 printUsage () {
   cat <<-_EOF_
-	Usage: bearDropper [-d|-f|-i #|-t] [-v]
-		-d    Dump mode, process entire log
-		-f    Follow mode, constantly monitoring log
-		-i #  Interval mode, reviewing # seconds back
-		-t    Today mode, processes log entries from same day
+	Usage: bearDropper [-e|-f|-i #|-t] [-v]
+		-e    entireLog mode, processes entire log contents
+		-f    follow mode, constantly monitoring log
+		-i #  interval mode, reviewing # seconds back
+		-t    today mode, processes log entries from same day
 		-v    verbose output
 	_EOF_
 }
 
-expandTime () {
+isValidBindTime () { echo $1 | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
+
+# expands Bind time syntax into seconds (ex: 3w6d23h59m59s)
+expandBindTime () {
   if echo "$1" | egrep -q '^[0-9]+$' ; then
     echo $1
     return 0
@@ -103,8 +109,7 @@ expandTime () {
   echo $(($newTime))
 }
 
-
-logText () { [ "$verbose" -eq 1 -o "$verbose" = "yes" -o "$verbose" = "true" -o "$verbose" = "on" ] && echo $@ ;}
+verbosePrint () { [ "$verbose" -eq 1 -o "$verbose" = "yes" -o "$verbose" = "true" -o "$verbose" = "on" ] && echo $@ ;}
 
 syncLeaseFile () {
   echo sync\'ing lease file...
@@ -117,11 +122,11 @@ getLogIP () { echo $1 | sed 's/^.*from \([0-9.]*\):[0-9]*$/\1/' ;}
 processFileBan () {
   local logLine logTime logIP
   if [ ! -f "$fileBanTemp" -a -f "$fileBanPersist" ] ; then
-    logText "Restoring persistent ban file to temp ban file..."
+    verbosePrint "Restoring persistent ban file to temp ban file..."
     cp -f "$fileBanPersist" "$fileBanTemp" 
   fi 
   if [ -f "$fileBanTemp" ] ; then
-    logText "Processing temp ban file for expired records..."
+    verbosePrint "Processing temp ban file for expired records..."
     mv -f "$fileBanTemp" "${fileBanTemp}.tmp"
     touch "$fileBanTemp"
     cat "${fileBanTemp}.tmp" | while logread logLine ; do
@@ -134,7 +139,7 @@ processFileBan () {
     lastFileBanPersistWrite=0
     [ -f "$fileBanPersist" ] && lastFileBanPersistWrite=`date -r "$fileBanPersist" +%s`
     if [ $((timeNow - lastFileBanPersistWrite)) -ge $persistentBanFileWritePeriod ] ; then
-      logText "Saving temp ban file to persistent ban file..."
+      verbosePrint "Saving temp ban file to persistent ban file..."
       cp -f "$fileBanTemp" "$fileBanPersist" 
   fi ; fi
 }
@@ -148,7 +153,7 @@ processLine () {
 
   if [ "$logTime" -ge "$timeFirst" ] ; then
     if ! egrep -q "^$leaseLine$" "$fileBanTemp" ; then 
-      logText "Adding $leaseLine to temp ban file..."
+      verbosePrint "Adding $leaseLine to temp ban file..."
       echo $leaseLine >> "$fileBanTemp"
   fi ; fi 
 }
@@ -161,9 +166,9 @@ processLine () {
 lastFileBanPersistWrite=0
 unset logMode
 
-while getopts dfi:tv arg ; do
+while getopts efi:tv arg ; do
   case "$arg" in 
-    d) logMode='dump'
+    e) logMode='entireLog'
       ;;
     f) logMode='follow'
       ;;
@@ -183,31 +188,31 @@ while getopts dfi:tv arg ; do
   esac
   shift `expr $OPTIND - 1`
 done
-if [ -z $logMode ] ; then
-  printUsage
-  exit 1
-fi
+[ -z $logMode ] && logMode="$defaultMode"
 
-attemptPeriod=`expandTime $attemptPeriod`
-banLength=`expandTime $banLength`
-persistentBanFileWritePeriod=`expandTime $persistentBanFileWritePeriod`
+attemptPeriod=`expandBindTime $attemptPeriod`
+banLength=`expandBindTime $banLength`
+persistentBanFileWritePeriod=`expandBindTime $persistentBanFileWritePeriod`
 
 timeNow=`date +%s`
 timeFirst=$((timeNow - attemptPeriod))
 
 # main event loops for various modes
 if [ "$logMode" = 'follow' ] ; then 
-  logText "Running in follow mode..."
+  verbosePrint "Running in follow mode..."
   $cmdLogread -f | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 #  followModeCheckPeriod
+elif [ "$logMode" = 'entireLog' ] ; then 
+  verbosePrint "Running in entireLog mode..."
+  $cmdLogread | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 elif [ "$logMode" = 'today' ] ; then 
-  logText "Running in today mode..."
+  verbosePrint "Running in today mode..."
   $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 elif [ "$logMode" = 'dump' ] ; then 
-  logText "Running in dump mode..."
+  verbosePrint "Running in dump mode..."
   $cmdLogread | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 elif [ "$logMode" = 'interval' ] ; then
-  logText "Running in interval mode (reviewing $logInterval seconds of log entries)..."
+  verbosePrint "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))
   $cmdLogread | egrep "$regexLogString" | while read logLine ; do
     timeWhen=`getLogTime "$logLine"`
