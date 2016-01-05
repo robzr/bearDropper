@@ -20,8 +20,8 @@
 #   - Uses BDDB based saving of rules - do we need this AND a lease file ?? - merge the leasefile into bddb 
 #     by adding a field ex: bddb_1_2_3_4=0,234246,2342342,235235 where 0 = ban status, then record last timestamp
 #   - Logs actions to logger (rewrite verbosePrint as logLine, to write to logger, have 2 args for reg/verb)
-#   - Add CIDR based whitelisting
-#   - Automatically adds firewall hook, chain & rules -- or integrate into /etc/config/firewall ??
+#   - Add whitelisting - -1 in status; use CIDR
+#   - Automatically add firewall hook, chain & rules -- or integrate into /etc/config/firewall ??
 #        
 
 # Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
@@ -59,11 +59,9 @@ uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban f
 					# storage when setting this.  To make it write on every run when using
 					# a mode other than follow, set it to 1.
 
-# need to integrate bddb
-uciLoad fileBanTemp '/tmp/bearDropper.bans'	# The ban temporary lease file
+uciLoad fileBanTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
 
-# need to integrate bddb
-uciLoad fileBanPersist '/etc/bearDropper.bans'	# The ban persistent lease file - consider
+uciLoad fileBanPersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider
 						# moving to USB or SD storage if available
 
 uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
