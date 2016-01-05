@@ -59,8 +59,10 @@ uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban f
 					# storage when setting this.  To make it write on every run when using
 					# a mode other than follow, set it to 1.
 
+# need to integrate bddb
 uciLoad fileBanTemp '/tmp/bearDropper.bans'	# The ban temporary lease file
 
+# need to integrate bddb
 uciLoad fileBanPersist '/etc/bearDropper.bans'	# The ban persistent lease file - consider
 						# moving to USB or SD storage if available
 
@@ -88,7 +90,7 @@ uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tun
 uciLoad formatLogDate '%b %d %H:%M:%S %Y'	# The format of the syslog time stamp
 
 uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to check for expired bans if there
-					# no log activity (need to implement signals - not yet implemented)
+					# no log activity 
 
 #
 # Begin functions
@@ -98,7 +100,7 @@ printUsage () {
   cat <<-_EOF_
 	Usage: bearDropper [-e|-f|-i #|-t] [-v]
 		-e    entire mode, processes entire log contents
-		-f    follow mode, constantly monitoring log
+		-f    follow mode, constantly monitors log
 		-i #  interval mode, reviewing # seconds back
 		-t    today mode, processes log entries from same day
 		-v    verbose output

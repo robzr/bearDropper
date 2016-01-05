@@ -40,9 +40,3 @@ Loops through logread, fast fowarding until one of the following conditions is m
   which could be increased for longer history.
 
 2)
-
-
-dropBrute.sh
-bearDropper
-use a signal to use a signal to f
-
