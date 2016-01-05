@@ -1,20 +1,27 @@
 #!/bin/ash -m
 #
-# bearDropper - dropbear log parsing ban agent for OpenWRT - Complete rewrite of dropBrute.sh 11/2015 - @robzr
-#   - No runtime dependencies other than busybox (ash) and iptables
-#   - Can use uci for (optional) configuration, but should run with no additional config
-#   - Can run continuously in background or periodically via cron 
-#   - Can automatically add firewall hook, chain & rules
+# bearDropper - dropbear log parsing ban agent for OpenWRT - rewrite of dropBrute.sh 11/2015 - @robzr
+#   - No dependencies outside of default Chaos Calmer installation
+#   - Optionally uses uci for configuration
+#   - Can run continuously in background (ie: via included init script) or periodically (via cron)
 #   - Can use BIND style time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
-#   - Can run in one of a few modes:
-#     "today" mode (default) - same simplistic behavior as dropBrute.sh; simply looks at log entries from the 
-#        day it is being run, simple and lightweight, generally run from cron periodically
-#     "entireLog" mode - runs through entire contents of the syslog ring buffer
-#     "interval" mode - processes entries from the last # of seconds, requires more processing than "today" mode,
-#        but would respond more accurately, run from cron periodically - if you run at 10 minute intervals, you
-#        would generally want to process the last 600 seconds worth of log entries at a time.
-#     "follow" mode - follows the log file to process entries as they happen, generally run via an init script
-#   - add "logger" syslog logging to report additional 
+#   - By default uses ramdisk for bddb file; can optionally write to persistent storage - routines are
+#     optomized to avoid excessive writes on flash storage
+#   - Runs in one of the following operational modes:
+#     follow mode - follows the log file to process entries as they happen; generally launched via init 
+#        script.  Responds the fastest, runs the most efficiently, but is always in memory.
+#     interval mode - only processes entries going back the specified interval; requires more processing 
+#        than today mode, but responds more accurately.  Generally run periodically via cron.
+#     today mode - looks at log entries from the day it is being run, simple and lightweight, generally 
+#        run from cron periodically (same simplistic behavior as dropBrute.sh)
+#     entire mode - runs through entire contents of the syslog ring buffer
+#
+#  TBD: 
+#   - Uses BDDB based saving of rules - do we need this AND a lease file ?? - merge the leasefile into bddb 
+#     by adding a field ex: bddb_1_2_3_4=0,234246,2342342,235235 where 0 = ban status, then record last timestamp
+#   - Logs actions to logger (rewrite verbosePrint as logLine, to write to logger, have 2 args for reg/verb)
+#   - Add CIDR based whitelisting
+#   - Automatically adds firewall hook, chain & rules -- or integrate into /etc/config/firewall ??
 #        
 
 # Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
@@ -24,21 +31,20 @@
 #   option attemptCount 	3
 #   option attemptPeriod 	1d
 #   option banLength    	1w
-#   option firewallChain 	bearDropper
+#   option firewallHookChain 	input_wan_rule
+#   option firewallHookPosition	1
 #   list   whitelist		10.0.1.0/24
 #   list   whitelist		192.168.1.0/24
 
-# Loads config variables from uci - args: variable_name (also used for uci option name), default_value
+# Loads config variables from uci - Args: $1 = variable_name (also used for uci option name), $2 = default_value
 uciLoad () {
-  # test the below line
-  # local getUci uciSection='bearDropper.@[0]'
-  local uciSection='bearDropper.@[0]'
-  local getUci
+  local getUci uciSection='bearDropper.@[0]'
   getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
   eval $1=\'$getUci\'
 }
 
-uciLoad defaultMode today		# Mode used if no mode is specified on command line
+uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - examples would be
+ 					# 24h for using a 24 hour time interval mode, today for today mode, etc.
 
 uciLoad attemptCount 3			# Failure attempts from a given IP required to trigger a ban
 
@@ -47,7 +53,7 @@ uciLoad attemptPeriod 1d		# Time period during which attemptCount must be exceed
 
 uciLoad banLength 1w			# How long a a ban will exist for
 
-uciLoad persistentBanFileWritePeriod 0	# How often to write to persistent ban file. 0 is never, otherwise the 
+uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban file. 0 is never, otherwise the 
 					# number of seconds (or a BIND style time string) can be used to specify 
 					# minimum intervals between writes.  Consider the life of your flash 
 					# storage when setting this.  To make it write on every run when using
@@ -58,26 +64,31 @@ uciLoad fileBanTemp '/tmp/bearDropper.bans'	# The ban temporary lease file
 uciLoad fileBanPersist '/etc/bearDropper.bans'	# The ban persistent lease file - consider
 						# moving to USB or SD storage if available
 
-uciLoad followModeCheckPeriod 10m  	# Time period, when in follow mode, to check for 
-					# expired bans if there is no log activity
+uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
+
+uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
 
 
 ###  Advanced variables below; it is unlikely that these will need to be changed, but just in case...
 
-uciLoad verbose 0			# Verbose output (also can be set with the -v flag)
+uciLoad logFacility 'authpriv.notice'	# Logger facility and priority - use "stdout" to bypass logger
 
-uciLoad formatLogDate '%b %d %H:%M:%S %Y'	# The format of the syslog time stamp
+uciLoad verbose 0			# Verbose output (also can be set with the -v flag)
 
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
 									# out auth fail log entries
 
-uciLoad firewallChain 'bearDropper'	# firewall chain bearDropper stores firewall commands in
+uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
 
 uciLoad firewallTarget '-j DROP'	# The target for a banned IP - you could use this to jump to a custom chain
 					# for logging, launching external commands, etc.
 
 uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tuning, ex: "logread -l250"
 
+uciLoad formatLogDate '%b %d %H:%M:%S %Y'	# The format of the syslog time stamp
+
+uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to check for expired bans if there
+					# no log activity (need to implement signals - not yet implemented)
 
 #
 # Begin functions
@@ -86,7 +97,7 @@ uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tun
 printUsage () {
   cat <<-_EOF_
 	Usage: bearDropper [-e|-f|-i #|-t] [-v]
-		-e    entireLog mode, processes entire log contents
+		-e    entire mode, processes entire log contents
 		-f    follow mode, constantly monitoring log
 		-i #  interval mode, reviewing # seconds back
 		-t    today mode, processes log entries from same day
@@ -94,7 +105,7 @@ printUsage () {
 	_EOF_
 }
 
-isValidBindTime () { echo $1 | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
+isValidBindTime () { echo "$1" | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
 
 # expands Bind time syntax into seconds (ex: 3w6d23h59m59s)
 expandBindTime () {
@@ -105,12 +116,14 @@ expandBindTime () {
     echo "Error: Invalid time specified ($1)" >&2
     exit 1
   fi
-  local newTime=`echo $1 | sed 's/\b\([0-9]*\)w/\1*7d+/g' | sed 's/\b\([0-9]*\)d[ +]*/\1*24h+/g' | sed 's/\b\([0-9]*\)h[ +]*/\1*60m+/g' | sed 's/\b\([0-9]*\)m[ +]*/\1*60s+/g' | sed 's/s//g' | sed 's/+$//'`
+  local newTime=`echo $1 | sed 's/\b\([0-9]*\)w/\1*7d+/g' | sed 's/\b\([0-9]*\)d[ +]*/\1*24h+/g' | \
+    sed 's/\b\([0-9]*\)h[ +]*/\1*60m+/g' | sed 's/\b\([0-9]*\)m[ +]*/\1*60s+/g' | sed 's/s//g' | sed 's/+$//'`
   echo $(($newTime))
 }
 
 verbosePrint () { [ "$verbose" -eq 1 -o "$verbose" = "yes" -o "$verbose" = "true" -o "$verbose" = "on" ] && echo $@ ;}
 
+# TBD
 syncLeaseFile () {
   echo sync\'ing lease file...
 }
@@ -168,7 +181,7 @@ unset logMode
 
 while getopts efi:tv arg ; do
   case "$arg" in 
-    e) logMode='entireLog'
+    e) logMode='entire'
       ;;
     f) logMode='follow'
       ;;
@@ -200,17 +213,20 @@ timeFirst=$((timeNow - attemptPeriod))
 # main event loops for various modes
 if [ "$logMode" = 'follow' ] ; then 
   verbosePrint "Running in follow mode..."
-  $cmdLogread -f | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
-#  followModeCheckPeriod
-elif [ "$logMode" = 'entireLog' ] ; then 
-  verbosePrint "Running in entireLog mode..."
+  $cmdLogread -f | egrep "$regexLogString" | while true ; do
+    if read -t 60 logLine ; do 
+      processLine "$logLine"
+    else
+      # here we can process our expirations
+    fi
+  done
+#  followModePurgeInterval 
+elif [ "$logMode" = 'entire' ] ; then 
+  verbosePrint "Running in entire mode..."
   $cmdLogread | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 elif [ "$logMode" = 'today' ] ; then 
   verbosePrint "Running in today mode..."
   $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
-elif [ "$logMode" = 'dump' ] ; then 
-  verbosePrint "Running in dump mode..."
-  $cmdLogread | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
 elif [ "$logMode" = 'interval' ] ; then
   verbosePrint "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))

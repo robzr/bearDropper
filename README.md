@@ -18,7 +18,6 @@ based on logread -f output that matches the (uci activation pattern)
  Loops though remaining lines, running date conversion/comparison until it gets to the current time threshhold
  When the current time is met once, we can move into fast forwarding disabled (0) to prevent further logic comparisons, since it is guaranteed to be at least as new
 
-
 create in memory a quasi-hash like:
  $_BD123.123.123.123=12342352,3248923,323940234,23423423
 
