@@ -5,8 +5,9 @@
 #   - Optionally uses uci for configuration
 #   - Can run continuously in background (ie: via included init script) or periodically (via cron)
 #   - Can use BIND style time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
-#   - By default uses ramdisk for bddb file; can optionally write to persistent storage - routines are
-#     optomized to avoid excessive writes on flash storage
+#   - By default uses tmpfs for bddb file; can optionally write to persistent storage - routines are
+#     optimized to avoid excessive writes on flash storage
+#   - Allows for permanent whitelisting of IP or CIDR entries
 #   - Runs in one of the following operational modes:
 #     follow mode - follows the log file to process entries as they happen; generally launched via init 
 #        script.  Responds the fastest, runs the most efficiently, but is always in memory.
@@ -17,11 +18,11 @@
 #     entire mode - runs through entire contents of the syslog ring buffer
 #
 #  TBD: 
-#   - Uses BDDB based saving of rules - do we need this AND a lease file ?? - merge the leasefile into bddb 
-#     by adding a field ex: bddb_1_2_3_4=0,234246,2342342,235235 where 0 = ban status, then record last timestamp
-#   - Logs actions to logger (rewrite verbosePrint as logLine, to write to logger, have 2 args for reg/verb)
-#   - Add whitelisting - -1 in status; use CIDR
+#   - rewrite processLine, processFileBan to use BDDB
+#   - Logs actions via logger (rewrite verbosePrint as logLine, to write to logger, have 2 args for reg/verb)
 #   - Automatically add firewall hook, chain & rules -- or integrate into /etc/config/firewall ??
+#   - write OpenWRT init script
+#   - packages as opkg
 #        
 
 # Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
@@ -59,21 +60,20 @@ uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban f
 					# storage when setting this.  To make it write on every run when using
 					# a mode other than follow, set it to 1.
 
-uciLoad fileBanTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
-
-uciLoad fileBanPersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider
+uciLoad fileBDDBPersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider
 						# moving to USB or SD storage if available
 
 uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
 
 uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
 
+uciLoad logLevel 1			# bearDropper log level - 0 = silent, 1 = standard, 2 = verbose...
 
 ###  Advanced variables below; it is unlikely that these will need to be changed, but just in case...
 
-uciLoad logFacility 'authpriv.notice'	# Logger facility and priority - use "stdout" to bypass logger
+uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
 
-uciLoad verbose 0			# Verbose output (also can be set with the -v flag)
+uciLoad fileBDDBTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
 
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
 									# out auth fail log entries
@@ -121,42 +121,34 @@ expandBindTime () {
   echo $(($newTime))
 }
 
-verbosePrint () { [ "$verbose" -eq 1 -o "$verbose" = "yes" -o "$verbose" = "true" -o "$verbose" = "on" ] && echo $@ ;}
-
-# TBD
-syncLeaseFile () {
-  echo sync\'ing lease file...
+# Args: $1 = loglevel, $2 = info to log
+logLine () {
+  [ $logLevel -gt $1 ] && return
+  shift
+  
+  if [ "$logFacility" == "stdout" ] ; then
+    echo $@ 
+  elif [ "$logFacility" == "stderr" ] ; then
+    echo $@ >&2
+  else 
+    logger -t "$logTag" -p "$logFacility" "$@"
+  fi
 }
 
 getLogTime () { date -d"`echo $1 | cut -f2-5 -d\ `" -D"$formatLogDate" +%s ;}
 
 getLogIP () { echo $1 | sed 's/^.*from \([0-9.]*\):[0-9]*$/\1/' ;}
 
-processFileBan () {
-  local logLine logTime logIP
-  if [ ! -f "$fileBanTemp" -a -f "$fileBanPersist" ] ; then
-    verbosePrint "Restoring persistent ban file to temp ban file..."
-    cp -f "$fileBanPersist" "$fileBanTemp" 
-  fi 
-  if [ -f "$fileBanTemp" ] ; then
-    verbosePrint "Processing temp ban file for expired records..."
-    mv -f "$fileBanTemp" "${fileBanTemp}.tmp"
-    touch "$fileBanTemp"
-    cat "${fileBanTemp}.tmp" | while logread logLine ; do
-      logTime="`echo $logLine | cut -f1 -d,`"
-      [ "$logTime" -ge "$timeFirst" ] && echo $logLine >> "$fileBanTemp"
-    done
-  fi
-  if [ $persistentBanFileWritePeriod -gt 0 ] ; then
-    timeNow=`date +%s`
-    lastFileBanPersistWrite=0
-    [ -f "$fileBanPersist" ] && lastFileBanPersistWrite=`date -r "$fileBanPersist" +%s`
-    if [ $((timeNow - lastFileBanPersistWrite)) -ge $persistentBanFileWritePeriod ] ; then
-      verbosePrint "Saving temp ban file to persistent ban file..."
-      cp -f "$fileBanTemp" "$fileBanPersist" 
-  fi ; fi
+processAll () {
+  # here is where the entire BDDB processing takes place
+  # basically loop through BDDB and run processEntry for each entry
 }
 
+processEntry () {
+  # process single BDDB entry
+}
+
+# Reads raw log line, if needed, adds to BDDB runs processEntry for that line
 processLine () {
   local logTime=`getLogTime "$1"`
   local logIP=`getLogIP "$1"`
@@ -164,21 +156,20 @@ processLine () {
   timeNow=`date +%s`
   timeFirst=$((timeNow - attemptPeriod))
 
-  if [ "$logTime" -ge "$timeFirst" ] ; then
-    if ! egrep -q "^$leaseLine$" "$fileBanTemp" ; then 
-      verbosePrint "Adding $leaseLine to temp ban file..."
-      echo $leaseLine >> "$fileBanTemp"
-  fi ; fi 
+#  if [ "$logTime" -ge "$timeFirst" ] ; then
+#    if ! egrep -q "^$leaseLine$" "$fileBanTemp" ; then 
+#      logLine "Adding $leaseLine to temp ban file..."
+#      echo $leaseLine >> "$fileBanTemp"
+#  fi ; fi 
 }
 
 
 #
-# Begin logic
+# Begin main logic
 #
 
-lastFileBanPersistWrite=0
+# figure out the log mode
 unset logMode
-
 while getopts efi:tv arg ; do
   case "$arg" in 
     e) logMode='entire'
@@ -203,35 +194,32 @@ while getopts efi:tv arg ; do
 done
 [ -z $logMode ] && logMode="$defaultMode"
 
+# expand time notation
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 persistentBanFileWritePeriod=`expandBindTime $persistentBanFileWritePeriod`
+followModePurgeInterval=`expandBindTime $followModePurgeInterval`
 
 timeNow=`date +%s`
 timeFirst=$((timeNow - attemptPeriod))
 
 # main event loops for various modes
 if [ "$logMode" = 'follow' ] ; then 
-  verbosePrint "Running in follow mode..."
+  logLine 2 "Running in follow mode..."
   $cmdLogread -f | egrep "$regexLogString" | while true ; do
-    if read -t 60 logLine ; do 
-      processLine "$logLine"
-    else
-      # here we can process our expirations
-    fi
+    read -t $followModePurgeInterval line && processLine "$line"
   done
-#  followModePurgeInterval 
 elif [ "$logMode" = 'entire' ] ; then 
-  verbosePrint "Running in entire mode..."
-  $cmdLogread | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
+  logLine 2 "Running in entire mode..."
+  $cmdLogread | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
 elif [ "$logMode" = 'today' ] ; then 
-  verbosePrint "Running in today mode..."
-  $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read logLine ; do processLine "$logLine" ; done
+  logLine 2 "Running in today mode..."
+  $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
 elif [ "$logMode" = 'interval' ] ; then
-  verbosePrint "Running in interval mode (reviewing $logInterval seconds of log entries)..."
+  logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))
-  $cmdLogread | egrep "$regexLogString" | while read logLine ; do
-    timeWhen=`getLogTime "$logLine"`
-    [ $timeWhen -ge $timeStart ] && processLine "$logLine"
+  $cmdLogread | egrep "$regexLogString" | while read line ; do
+    timeWhen=`getLogTime "$line"`
+    [ $timeWhen -ge $timeStart ] && processLine "$line"
   done
 fi

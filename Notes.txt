@@ -1,0 +1,29 @@
+opkg list-upgradable | cut -f1 -d\ | xargs -n1 opkg upgrade
+echo tcpdump nmap screen vim | xargs -n1 opkg install 
+
+VBoxManage convertfromraw --format VDI openwrt-15.05-x86-generic-combined-ext4.img openwrt-15.05-x86-generic-combined-ext4.vdi
+
+bearDropper
+ -t 3w2d1s -> bind sintax 
+ -t all -> since beginning of log
+ -t today -> today
+
+only need to keep the last entry and timestamp in the database, can even be in comments
+
+optional -i (ipset) for adding to an ipset...
+
+Chaos Calmer | Things to filter against - 
+- Try ssh with both bad password and key based auth (no key / bad key / ???)
+
+Sun Nov  8 23:15:39 2015 authpriv.info dropbear[26398]: Child connection from 43.229.53.80:23915
+Sun Nov  8 23:15:42 2015 authpriv.info dropbear[26398]: Exit before auth: Disconnect received
+
+Sun Nov  8 22:48:50 2015 authpriv.info dropbear[25570]: Child connection from 91.236.74.6:42499
+Sun Nov  8 22:48:53 2015 authpriv.warn dropbear[25570]: Login attempt for nonexistent user from 91.236.74.6:42499
+Sun Nov  8 22:48:53 2015 authpriv.warn dropbear[25570]: Login attempt for nonexistent user from 91.236.74.6:42499
+Sun Nov  8 22:48:54 2015 authpriv.info dropbear[25570]: Exit before auth: Disconnect received
+
+Sun Nov  8 21:24:45 2015 authpriv.info dropbear[23489]: Child connection from 10.0.1.100:60316
+Sun Nov  8 21:24:49 2015 authpriv.info dropbear[23489]: Exit before auth (user 'root', 0 fails): Exited normally
+
+First release - make it fkin simple and work.
