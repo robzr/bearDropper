@@ -1,29 +1,23 @@
 #!/bin/ash -m
 #
-# bearDropper - dropbear log parsing ban agent for OpenWRT - rewrite of dropBrute.sh 11/2015 - @robzr
-#   - No dependencies outside of default Chaos Calmer installation
-#   - Optionally uses uci for configuration
+# bearDropper - dropbear log parsing ban agent for OpenWRT - http://github.com/robzr/bearDropper
+#   Chaos Calmer rewrite of dropBrute.sh - @robzr 11/2015 - Features:`
+#   - lightweight, no dependencies outside of default Chaos Calmer installation
+#   - Optionally uses uci for configuration, overrideable via command line arguments
 #   - Can run continuously in background (ie: via included init script) or periodically (via cron)
 #   - Can use BIND style time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
-#   - By default uses tmpfs for bddb file; can optionally write to persistent storage - routines are
+#   - Whitelist IP or CIDR entries in UCI or state file
+#   - By default uses tmpfs for state file; can optionally write to persistent storage - routines are
 #     optimized to avoid excessive writes on flash storage
-#   - Allows for permanent whitelisting of IP or CIDR entries
-#   - Runs in one of the following operational modes:
-#     follow mode - follows the log file to process entries as they happen; generally launched via init 
+#   - Runs in one of the following operational modes for flexibility:
+#     follow mode - follows the log file to process entries as they happen; generally launched via init
 #        script.  Responds the fastest, runs the most efficiently, but is always in memory.
-#     interval mode - only processes entries going back the specified interval; requires more processing 
+#     interval mode - only processes entries going back the specified interval; requires more processing
 #        than today mode, but responds more accurately.  Generally run periodically via cron.
-#     today mode - looks at log entries from the day it is being run, simple and lightweight, generally 
+#     today mode - looks at log entries from the day it is being run, simple and lightweight, generally
 #        run from cron periodically (same simplistic behavior as dropBrute.sh)
 #     entire mode - runs through entire contents of the syslog ring buffer
 #
-#  TBD: 
-#   - rewrite processLine, processFileBan to use BDDB
-#   - Logs actions via logger (rewrite verbosePrint as logLine, to write to logger, have 2 args for reg/verb)
-#   - Automatically add firewall hook, chain & rules -- or integrate into /etc/config/firewall ??
-#   - write OpenWRT init script
-#   - packages as opkg
-#        
 
 # Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
 #
@@ -45,7 +39,9 @@ uciLoad () {
 }
 
 uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - examples would be
- 					# 24h for using a 24 hour time interval mode, today for today mode, etc.
+					# follow, today, entire or enter a time string for interval mode.
+ 					# Time strings would be something like 1h30m for 1 hour 30 minutes,
+					# valid types are (w)eek (d)ay (h)our (m)inutes (s)econds.
 
 uciLoad attemptCount 3			# Failure attempts from a given IP required to trigger a ban
 
@@ -67,11 +63,15 @@ uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
 
 uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
 
-uciLoad logLevel 1			# bearDropper log level - 0 = silent, 1 = standard, 2 = verbose...
-
-###  Advanced variables below; it is unlikely that these will need to be changed, but just in case...
+uciLoad logLevel 1			# bearDropper log level - 0 = silent, 1 = standard (default), 2 = verbose...
 
 uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
+
+#
+##  Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
+#
+
+uciLoad logTag 'bearDropper'		# bearDropper syslog tag
 
 uciLoad fileBDDBTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
 
@@ -94,17 +94,6 @@ uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to che
 # Begin functions
 #
 
-printUsage () {
-  cat <<-_EOF_
-	Usage: bearDropper [-e|-f|-i #|-t] [-v]
-		-e    entire mode, processes entire log contents
-		-f    follow mode, constantly monitors log
-		-i #  interval mode, reviewing # seconds back
-		-t    today mode, processes log entries from same day
-		-v    verbose output
-	_EOF_
-}
-
 isValidBindTime () { echo "$1" | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
 
 # expands Bind time syntax into seconds (ex: 3w6d23h59m59s)
@@ -126,12 +115,9 @@ logLine () {
   [ $logLevel -gt $1 ] && return
   shift
   
-  if [ "$logFacility" == "stdout" ] ; then
-    echo $@ 
-  elif [ "$logFacility" == "stderr" ] ; then
-    echo $@ >&2
-  else 
-    logger -t "$logTag" -p "$logFacility" "$@"
+  if [ "$logFacility" == "stdout" ] ; then echo $@ 
+  elif [ "$logFacility" == "stderr" ] ; then echo $@ >&2
+  else logger -t "$logTag" -p "$logFacility" "$@"
   fi
 }
 
@@ -163,6 +149,22 @@ processLine () {
 #  fi ; fi 
 }
 
+printUsage () {
+  cat <<-_EOF_
+	Usage: bearDropper [-e|-f|-i #|-t] [-l #] [-F ...]
+
+             Running Modes
+		-e     entire mode, processes entire log contents
+		-f     follow mode, constantly monitors log
+		-i #   interval mode, reviewing # seconds back
+		-t     today mode, processes log entries from same day
+
+             Options
+		-l #   log level, 0=off, 1=standard, 2=verbose
+                -F ... log facility (syslog facility or stdout/stderr)
+	_EOF_
+}
+
 
 #
 # Begin main logic
@@ -170,7 +172,7 @@ processLine () {
 
 # figure out the log mode
 unset logMode
-while getopts efi:tv arg ; do
+while getopts efi:tl:F: arg ; do
   case "$arg" in 
     e) logMode='entire'
       ;;
@@ -185,10 +187,12 @@ while getopts efi:tv arg ; do
       ;;
     t) logMode='today'
       ;;
-    v) verbose=1
+    l) logLevel=$OPTARG
+      ;;
+    F) logFacility=$OPTARG
       ;;
     *) printUsage
-      exit 1
+      exit 3
   esac
   shift `expr $OPTIND - 1`
 done
