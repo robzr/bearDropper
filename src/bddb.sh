@@ -5,6 +5,11 @@
 # TBD: Add functionality to distinguish between save to flash vs save to memory, 
 #      using interim save to flash, diff, then mv to avoid unnecessary flash writes
 #
+# A BDDB entry has one of three states:
+#   (whitelist) bddb_1_2_3_4=-1  
+#   (tracking)  bddb_1_2_3_4=0,12432345234[,23423422343]  (not blacklisted, but detected bad entrie(s))
+#   (blacklist) bddb_1_2_3_4=1,2342343243                 (blacklisted, time is last known bad attempt)
+#
 # _BEGIN_MEAT_
 
 bddbStateChange=0 
@@ -31,16 +36,35 @@ bddbLoad () {
 bddbSave () { 
   local saveFile="$1"
   [ $bddbStateChange -eq 0 ] && return 
-  set | egrep '^bddb_[0-9_]*=[0-9-][0-9]*' | sed s/\'//g > "$saveFile"
+  set | egrep '^bddb_[0-9_]*=[0-9-][0-9,]*' | sed s/\'//g > "$saveFile"
   bddbStateChange=0 
+}
+
+# Set bddb entry to status=1, update ban time flag with newest
+# Args: $1=IP Address $2=timeFlag
+bddbEnableStatus () {
+  local entry=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  local newestTime=`bddbGetTimes $1 | sed 's/.* //' | xargs echo $2 | tr \  '\n' | sort -n | tail -1 `
+  eval $entry="1,$newestTime"
+  bddbStateChange=1
+}
+
+# Args: $1=IP Address
+bddbGetStatus () {
+  bddbGetEntry $1 | cut -d, -f1
+}
+
+# Args: $1=IP Address
+bddbGetTimes () {
+  bddbGetEntry $1 | cut -d, -f2-
 }
 
 # Args: $1 = IP address, $2 [$3 ...] = timestamp (seconds since epoch)
 bddbAddEntry () {
-  local ip="`echo $1 | tr . _`" ; shift
+  local ip="`echo "$1" | tr . _`" ; shift
   local newEpochList="$@" status="`eval echo \\\$bddb_$ip | cut -f1 -d,`"
   local oldEpochList="`eval echo \\\$bddb_$ip | cut -f2- -d,  | tr , \ `" 
-  local epochList=`echo $oldEpochList $newEpochList | xargs -n 1 echo | sort -un | xargs echo -n | tr \  ,`
+  local epochList=`echo $oldEpochList $newEpochList | xargs -n 1 echo | sort -n | xargs echo -n | tr \  ,`
   [ -z "$status" ] && status=0
   eval "bddb_$ip"\=\"$status,$epochList\"
   bddbStateChange=1
@@ -62,7 +86,15 @@ bddbDump () {
   done
 } 
 
-# Expires old times
+# retrieve single IP entry, Args: $1=IP
+bddbGetEntry () {
+  local entry
+  entry=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  eval echo \$$entry
+}
+
+# Expires old times - this is probably obsolete (integrate to bearDropper.sh)
+#
 # Args: $1 = attemptPeriod $2 = attemptCount
 bddbProcess () {
   local now=`date +%s` ip ipRaw times entry attemptPeriod="$1" attemptCount="$2"

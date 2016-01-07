@@ -51,7 +51,7 @@ uciLoad attemptPeriod 1d		# Time period during which attemptCount must be exceed
 
 uciLoad banLength 1w			# How long a ban exists for once the attempt threshhold is exceeded
 
-uciLoad logLevel 1			# bearDropper log level - 0 = silent, 1 = standard (default), 2 = verbose...
+uciLoad logLevel 1			# bearDropper log level, 0=silent 1=default, 2=verbose, 3=debug
 
 uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
 
@@ -112,48 +112,87 @@ expandBindTime () {
 
 # Args: $1 = loglevel, $2 = info to log
 logLine () {
-  [ $logLevel -gt $1 ] && return
+  [ $1 -gt $logLevel ] && return
   shift
   
-  if [ "$logFacility" == "stdout" ] ; then echo $@ 
-  elif [ "$logFacility" == "stderr" ] ; then echo $@ >&2
-  else logger -t "$logTag" -p "$logFacility" "$@"
+  if [ "$logFacility" == "stdout" ] ; then 
+    echo "$@"
+  elif [ "$logFacility" == "stderr" ] ; then 
+    echo "$@" >&2
+  else 
+    logger -t "$logTag" -p "$logFacility" "$@"
   fi
 }
 
+# need to add validation just to be extra safe
 getLogTime () { date -d"`echo $1 | cut -f2-5 -d\ `" -D"$formatLogDate" +%s ;}
 
+# should be safe, sed output should fail null (but verify)
 getLogIP () { echo $1 | sed 's/^.*from \([0-9.]*\):[0-9]*$/\1/' ;}
 
-processAll () {
-  # here is where the entire BDDB processing takes place
-  # basically loop through BDDB and run processEntry for each entry
+processAll () { :
+  # Run periodically, this will:
+  #  - add firewall hooks if needed
+  #  - add firewall rules if needed
+  #  - expunge expired records
 }
 
+# Only used when status is already 0 and possibly going to 1, Args: $1=IP
 processEntry () {
-  # process single BDDB entry
+  local ip="$1" firstTime lastTime
+  local entry=`bddbGetEntry "$1"`
+  local times=`echo $entry | cut -d, -f2- | tr , \ `
+  local timeCount=`echo $times | wc -w`
+
+  # condition 0 - not enough attempts, do nothing and (continue)
+  # condition 1 - attempts exceed threshhold, but period is too long - trim oldest time, continue
+  # condition 2 - attempts exceed threshhold in time period - ban!!!
+  while [ $timeCount -ge $attemptCount ] ; do
+    firstTime=`echo $times | cut -d\  -f1`
+    lastTime=`echo $times | cut -d\  -f$timeCount`
+    timeDiff=$((lastTime - firstTime))
+  
+    logLine 3 "processEntry($ip) count=$timeCount timeDiff=$timeDiff/$attemptPeriod"
+    if [ $timeDiff -le $attemptPeriod ] ; then
+      bddbEnableStatus $ip $lastTime
+      logLine 1 "processEntry($ip) BANNING"
+      # add code to ban :)
+      break
+    fi
+    times=`echo $times | cut -d\  -f2-`
+    timeCount=`echo $times | wc -w`
+  done  
 }
 
 # Reads raw log line, if needed, adds to BDDB runs processEntry for that line
 processLine () {
-  local logTime=`getLogTime "$1"`
-  local logIP=`getLogIP "$1"`
-  local leaseLine=`printf '%s,%s\n' $logIP $logTime`
-  timeNow=`date +%s`
-  timeFirst=$((timeNow - attemptPeriod))
+  local time=`getLogTime "$1"` 
+  local ip=`getLogIP "$1"` 
+  local timeNow=`date +%s`
+  local timeFirst=$((timeNow - attemptPeriod))
+  local status="`bddbGetStatus $ip`"
+  local entry
 
-#  if [ "$logTime" -ge "$timeFirst" ] ; then
-#    if ! egrep -q "^$leaseLine$" "$fileBanTemp" ; then 
-#      logLine "Adding $leaseLine to temp ban file..."
-#      echo $leaseLine >> "$fileBanTemp"
-#  fi ; fi 
+  logLine 3 "processLine($ip) status=$status"
+  if [ "$status" == "-1" ] ; then
+      logLine 3 "processLine() $ip is whitelisted"
+  elif [ "$status" == "1" ] ; then
+      logLine 3 "processLine() $ip is already banned, updating ban timer"
+      bddbEnableStatus $ip $time
+  elif [ ! -z $ip -a ! -z $time ] ; then
+    logLine 3 "processLine() processing ip=$ip time=$time"
+    bddbAddEntry "$ip" "$time"
+    processEntry "$ip"
+  else
+    logLine 3 "processLine() malformed line=$1 ip=$ip time=$time"
+  fi
 }
 
 printUsage () {
   cat <<-_EOF_
 	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-l #] [-f ...] [-F #] [-p #] [-P #] [-s ...]
 
-	  Running Modes (-m)
+	  Running Modes (-m) (def: $defaultMode)
 	    follow     constantly monitors log
 	    entire     processes entire log contents
 	    today      processes log entries from same day only
@@ -181,7 +220,7 @@ printUsage () {
 ##  Begin main logic
 #
 unset logMode
-while getopts a:b:c:C:f:F:l:m:p:P:s: arg ; do
+while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
   case "$arg" in 
     a) attemptCount=$OPTARG
       ;;
@@ -241,6 +280,6 @@ elif isValidBindTime "$logMode" ; then
     [ $timeWhen -ge $timeStart ] && processLine "$line"
   done
 else
-  logline 0 "Error - invalid log mode $logMode
+  logline 0 "Error - invalid log mode $logMode"
   exit -1
 fi
