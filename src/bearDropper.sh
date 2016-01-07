@@ -1,7 +1,8 @@
 #!/bin/ash -m
 #
-# bearDropper - dropbear log parsing ban agent for OpenWRT - http://github.com/robzr/bearDropper
-#   Chaos Calmer rewrite of dropBrute.sh - @robzr 11/2015 - Features:`
+# bearDropper - dropbear log parsing ban agent for OpenWRT (Chaos Calmer rewrite of dropBrute.sh)
+#   http://github.com/robzr/bearDropper  -- Rob Zwissler 11/2015
+# 
 #   - lightweight, no dependencies outside of default Chaos Calmer installation
 #   - Optionally uses uci for configuration, overrideable via command line arguments
 #   - Can run continuously in background (ie: via included init script) or periodically (via cron)
@@ -22,7 +23,7 @@
 # Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
 #
 # config bearDropper
-#   option defaultMode 		today
+#   option defaultMode 		24h
 #   option attemptCount 	3
 #   option attemptPeriod 	1d
 #   option banLength    	1w
@@ -38,7 +39,7 @@ uciLoad () {
   eval $1=\'$getUci\'
 }
 
-uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - examples would be
+uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - modes are
 					# follow, today, entire or enter a time string for interval mode.
  					# Time strings would be something like 1h30m for 1 hour 30 minutes,
 					# valid types are (w)eek (d)ay (h)our (m)inutes (s)econds.
@@ -48,24 +49,25 @@ uciLoad attemptCount 3			# Failure attempts from a given IP required to trigger 
 uciLoad attemptPeriod 1d		# Time period during which attemptCount must be exceeded in order to 
 					# trigger a ban.
 
-uciLoad banLength 1w			# How long a a ban will exist for
-
-uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban file. 0 is never, otherwise the 
-					# number of seconds (or a BIND style time string) can be used to specify 
-					# minimum intervals between writes.  Consider the life of your flash 
-					# storage when setting this.  To make it write on every run when using
-					# a mode other than follow, set it to 1.
-
-uciLoad fileBDDBPersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider
-						# moving to USB or SD storage if available
-
-uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
-
-uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
+uciLoad banLength 1w			# How long a ban exists for once the attempt threshhold is exceeded
 
 uciLoad logLevel 1			# bearDropper log level - 0 = silent, 1 = standard (default), 2 = verbose...
 
 uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
+
+uciLoad persistentBanFileWritePeriod 1d	# How often to write to persistent ban file. 0 is never, otherwise a 
+					# time string can be used to specify minimum intervals between writes.
+					# Consider the life of flash storage when setting this.  To make it write 
+					# on every run when using a mode other than follow, set it to 1.
+
+uciLoad fileBDDBPersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider moving to USB or SD
+						# storage if available to save wear & tear
+
+uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
+
+uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
+
+uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
 
 #
 ##  Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
@@ -77,8 +79,6 @@ uciLoad fileBDDBTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) f
 
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
 									# out auth fail log entries
-
-uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
 
 uciLoad firewallTarget '-j DROP'	# The target for a banned IP - you could use this to jump to a custom chain
 					# for logging, launching external commands, etc.
@@ -151,45 +151,59 @@ processLine () {
 
 printUsage () {
   cat <<-_EOF_
-	Usage: bearDropper [-e|-f|-i #|-t] [-l #] [-F ...]
+	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-l #] [-f ...] [-F #] [-p #] [-P #] [-s ...]
 
-             Running Modes
-		-e     entire mode, processes entire log contents
-		-f     follow mode, constantly monitors log
-		-i #   interval mode, reviewing # seconds back
-		-t     today mode, processes log entries from same day
+	  Running Modes (-m)
+	    follow     constantly monitors log
+	    entire     processes entire log contents
+	    today      processes log entries from same day only
+	    ...        interval mode, specify time string or seconds
 
-             Options
-		-l #   log level, 0=off, 1=standard, 2=verbose
-                -F ... log facility (syslog facility or stdout/stderr)
+	  Options
+	    -a #   attempt count before banning (def: $attemptCount)
+	    -b #   ban length once attempts hit threshhold (def: $banLength)
+	    -c ... firewall chain to record bans (def: $firewallChain)
+	    -C ... firewall chain to hook into (def: $firewallHookChain)
+	    -f ... log facility (syslog facility or stdout/stderr) (def: $logFacility)
+	    -F #   firewall chain hook position (def: $firewallHookPosition)
+	    -l #   log level - 0=off, 1=standard, 2=verbose (def: $logLevel)
+	    -p #   attempt period which attempt counts must happen in (def: $attemptPeriod)
+	    -P #   persistent state file write period (def: $persistentBanFileWritePeriod)
+	    -s ... persistent state file location (def: $fileBDDBPersist)
+
+	  All time strings can be specified in seconds, or using BIND style
+	  time strings, ex: 1w2d3h5m30s is 1 week, 2 days, 3 hours, etc...
+
 	_EOF_
 }
 
-
 #
-# Begin main logic
+##  Begin main logic
 #
-
-# figure out the log mode
 unset logMode
-while getopts efi:tl:F: arg ; do
+while getopts a:b:c:C:f:F:l:m:p:P:s: arg ; do
   case "$arg" in 
-    e) logMode='entire'
+    a) attemptCount=$OPTARG
       ;;
-    f) logMode='follow'
+    b) banLength=$OPTARG
       ;;
-    i) logMode='interval'
-      logInterval=$OPTARG
-      if ! isValidBindTime $logInterval ; then
-        echo "Invalid (non numeric) log interval set." >&2
-        exit -1
-      fi
+    c) firewallChain=$OPTARG
       ;;
-    t) logMode='today'
+    C) firewallHookChain=$OPTARG
+      ;;
+    f) logFacility=$OPTARG
+      ;;
+    F) firewallHookPosition=$OPTARG
       ;;
     l) logLevel=$OPTARG
       ;;
-    F) logFacility=$OPTARG
+    m) logMode=$OPTARG
+      ;;
+    p) attemptPeriod=$OPTARG
+      ;;
+    P) persistentBanFileWritePeriod=$OPTARG
+      ;;
+    s) fileBDDBPersist=$OPTARG
       ;;
     *) printUsage
       exit 3
@@ -198,7 +212,6 @@ while getopts efi:tl:F: arg ; do
 done
 [ -z $logMode ] && logMode="$defaultMode"
 
-# expand time notation
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 persistentBanFileWritePeriod=`expandBindTime $persistentBanFileWritePeriod`
@@ -207,7 +220,7 @@ followModePurgeInterval=`expandBindTime $followModePurgeInterval`
 timeNow=`date +%s`
 timeFirst=$((timeNow - attemptPeriod))
 
-# main event loops for various modes
+# main event loops
 if [ "$logMode" = 'follow' ] ; then 
   logLine 2 "Running in follow mode..."
   $cmdLogread -f | egrep "$regexLogString" | while true ; do
@@ -219,11 +232,15 @@ elif [ "$logMode" = 'entire' ] ; then
 elif [ "$logMode" = 'today' ] ; then 
   logLine 2 "Running in today mode..."
   $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
-elif [ "$logMode" = 'interval' ] ; then
+elif isValidBindTime "$logMode" ; then
+  logInterval=`expandBindTime $logMode`
   logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))
   $cmdLogread | egrep "$regexLogString" | while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLine "$line"
   done
+else
+  logline 0 "Error - invalid log mode $logMode
+  exit -1
 fi
