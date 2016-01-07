@@ -35,8 +35,7 @@ bddbLoad () {
 # Saves environment bddb entries to file, Arg: $1 = file to save in
 bddbSave () { 
   local saveFile="$1"
-  [ $bddbStateChange -eq 0 ] && return 
-  set | egrep '^bddb_[0-9_]*=[0-9-][0-9,]*' | sed s/\'//g > "$saveFile"
+  set | egrep '^bddb_[0-9_]*=' | sed s/\'//g > "$saveFile"
   bddbStateChange=0 
 }
 
@@ -64,7 +63,7 @@ bddbAddEntry () {
   local ip="`echo "$1" | tr . _`" ; shift
   local newEpochList="$@" status="`eval echo \\\$bddb_$ip | cut -f1 -d,`"
   local oldEpochList="`eval echo \\\$bddb_$ip | cut -f2- -d,  | tr , \ `" 
-  local epochList=`echo $oldEpochList $newEpochList | xargs -n 1 echo | sort -n | xargs echo -n | tr \  ,`
+  local epochList=`echo $oldEpochList $newEpochList | xargs -n 1 echo | sort -un | xargs echo -n | tr \  ,`
   [ -z "$status" ] && status=0
   eval "bddb_$ip"\=\"$status,$epochList\"
   bddbStateChange=1
