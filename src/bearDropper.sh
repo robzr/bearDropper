@@ -19,12 +19,11 @@
 #        run from cron periodically (same simplistic behavior as dropBrute.sh)
 #     entire mode - runs through entire contents of the syslog ring buffer
 #
-
-# Here is a configuration example (this would be the contents of a file /etc/config/bearDropper)
+# Here is an example uci config file (/etc/config/bearDropper)
 #
 # config bearDropper
 #   option defaultMode 		24h
-#   option attemptCount 	3
+#   option attemptCount 	5
 #   option attemptPeriod 	1d
 #   option banLength    	1w
 #   option firewallHookChain 	input_wan_rule
@@ -39,17 +38,21 @@ uciLoad () {
   eval $1=\'$getUci\'
 }
 
+#
+## Common config variables - these can also be changed at runtime with command line options
+#
+
 uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - modes are
 					# follow, today, entire or enter a time string for interval mode.
  					# Time strings would be something like 1h30m for 1 hour 30 minutes,
 					# valid types are (w)eek (d)ay (h)our (m)inutes (s)econds.
 
-uciLoad attemptCount 3			# Failure attempts from a given IP required to trigger a ban
+uciLoad attemptCount 5			# Failure attempts from a given IP required to trigger a ban
 
-uciLoad attemptPeriod 1d		# Time period during which attemptCount must be exceeded in order to 
+uciLoad attemptPeriod 1d		# Time period threshold during which attemptCount must be exceeded in order to 
 					# trigger a ban.
 
-uciLoad banLength 1w			# How long a ban exists for once the attempt threshhold is exceeded
+uciLoad banLength 1w			# How long a ban exist once the attempt threshhold is exceeded
 
 uciLoad logLevel 1			# bearDropper log level, 0=silent 1=default, 2=verbose, 3=debug
 
@@ -60,20 +63,21 @@ uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state f
 					# Consider the life of flash storage when setting this.  To make it write 
 					# on every run when using a mode other than follow, set it to 1.
 
-uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider moving to USB or SD
-							# storage if available to save wear & tear
+uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider moving to USB
+							# or SD storage if available to save wear & tear
 
-uciLoad firewallHookPosition 1 		# position in firewall chain to hook (-1 = do not add, 0 = append, 1+ = absolute position)
+uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook the chain containing ban rules into
 
-uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook into
+uciLoad firewallHookPosition 1 		# position in firewall hook chain (-1 = don't add, 0 = append, 1+ = absolute position)
 
 uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
+
 
 #
 ##  Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
 #
 
-uciLoad logTag 'bearDropper'		# bearDropper syslog tag
+uciLoad logTag "bearDropper[$$]"		# bearDropper syslog tag
 
 uciLoad fileStateTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
 
@@ -138,7 +142,6 @@ processAll () { :
 }
 
 # Args: $1=IP
-# Args: $1=IP
 banIP () {
   local ip="$1"
 
@@ -164,6 +167,19 @@ banIP () {
   fi
 }
 
+wipeFirewall () {
+  if [ $firewallHookPosition -ge 0 ] ; then
+    if iptables -C $firewallHookChain -j $firewallChain 2>/dev/null ; then
+      logLine 1 "Removing hook from iptables chain $firewallHookChain"
+      iptables -D $firewallHookChain -j $firewallChain
+  fi ; fi
+  if iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
+    logLine 1 "Flushing and removing iptables chain $firewallChain"
+    iptables -F $firewallChain 2>/dev/null
+    iptables -X $firewallChain 2>/dev/null
+  fi
+}
+
 # Only used when status is already 0 and possibly going to 1, Args: $1=IP
 processEntry () {
   local ip="$1" firstTime lastTime
@@ -171,9 +187,9 @@ processEntry () {
   local times=`echo $entry | cut -d, -f2- | tr , \ `
   local timeCount=`echo $times | wc -w`
 
-  # condition 0 - not enough attempts, do nothing and (continue)
-  # condition 1 - attempts exceed threshhold, but period is too long - trim oldest time, continue
-  # condition 2 - attempts exceed threshhold in time period - ban!!!
+  # condition 0 - not enough attempts, do nothing
+  # condition 1 - attempts exceed threshhold in time period - ban!!!
+  # condition 2 - attempts exceed threshhold, but period is too long - trim oldest time, recalculate
   while [ $timeCount -ge $attemptCount ] ; do
     firstTime=`echo $times | cut -d\  -f1`
     lastTime=`echo $times | cut -d\  -f$timeCount`
@@ -197,14 +213,19 @@ processLine () {
   local timeNow=`date +%s`
   local timeFirst=$((timeNow - attemptPeriod))
   local status="`bddbGetStatus $ip`"
-  local entry
+  local entry oldTime
 
   if [ "$status" == "-1" ] ; then
     logLine 2 "processing $ip@$time: IP is whitelisted"
   elif [ "$status" == "1" ] ; then
-    logLine 2 "processing $ip@$time: bad attempt - already banned, updating timer"
-    bddbEnableStatus $ip $time
-    saveState
+    oldTime=`bddbGetTimes $ip`
+    if [ $oldTime -ge $time ] ; then
+      logLine 2 "processing $ip@$time: bad attempt - already banned, timer already new or newer"
+    else
+      logLine 2 "processing $ip@$time: bad attempt - already banned, updating timer"
+      bddbEnableStatus $ip $time
+      saveState
+    fi
     banIP $ip
   elif [ ! -z $ip -a ! -z $time ] ; then
     logLine 2 "processing $ip@$time: bad attempt - recording"
@@ -238,6 +259,7 @@ printUsage () {
 	    entire     processes entire log contents
 	    today      processes log entries from same day only
 	    ...        interval mode, specify time string or seconds
+	    wipe       wipe state files, unhook and remove firewall chain
 
 	  Options
 	    -a #   attempt count before banning (def: $attemptCount)
@@ -257,8 +279,7 @@ printUsage () {
 	_EOF_
 }
 
-#
-##  Begin main logic
+#  Begin main logic
 #
 unset logMode
 while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
@@ -315,7 +336,7 @@ elif [ "$logMode" = 'entire' ] ; then
   $cmdLogread | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
 elif [ "$logMode" = 'today' ] ; then 
   logLine 2 "Running in today mode..."
-  $cmdLogread | egrep "`date +'^%a %b %d ..:..:.. %Y'`" | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
+  $cmdLogread | egrep "`date +'^%a %b %e ..:..:.. %Y'`" | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
@@ -324,6 +345,17 @@ elif isValidBindTime "$logMode" ; then
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLine "$line"
   done
+elif [ "$logMode" = 'wipe' ] ; then 
+  logLine 2 "Wiping state files, unhooking and removing iptables chains"
+  wipeFirewall
+  if [ -f "$fileStateTemp" ] ; then
+    logLine 1 "Removing non-persistent statefile ($fileStateTemp)"
+    rm -f "$fileStateTemp"
+  fi
+  if [ -f "$fileStatePersist" ] ; then
+    logLine 1 "Removing persistent statefile ($fileStatePersist)"
+    rm -f "$fileStatePersist"
+  fi
 else
   logLine 0 "Error - invalid log mode $logMode"
   exit 3
