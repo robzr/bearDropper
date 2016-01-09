@@ -107,8 +107,8 @@ logLine () {
   [ $1 -gt $logLevel ] && return
   shift
   
-  if [ "$logFacility" == "stdout" ] ; then echo "$@"
-  elif [ "$logFacility" == "stderr" ] ; then echo "$@" >&2
+  if [ "$logFacility" = "stdout" ] ; then echo "$@"
+  elif [ "$logFacility" = "stderr" ] ; then echo "$@" >&2
   else logger -t "$logTag" -p "$logFacility" "$@"
   fi
 }
@@ -145,7 +145,7 @@ banIP () {
   if [ $firewallHookPosition -ge 0 ] ; then
     if ! iptables -C $firewallHookChain -j $firewallChain 2>/dev/null ; then
       logLine 1 "Inserting hook into iptables chain $firewallHookChain"
-      if [ $firewallHookPosition -eq 0 ] ; then
+      if [ $firewallHookPosition = 0 ] ; then
         iptables -A $firewallHookChain -j $firewallChain
       else
         iptables -I $firewallHookChain $firewallHookPosition -j $firewallChain
@@ -176,7 +176,7 @@ wipeFirewall () {
 bddbPurgeExpires () {
   local now=`date +%s`
   bddbGetAllIPs | while read ip ; do
-    if [ `bddbGetStatus $ip` -eq 1 ] ; then
+    if [ `bddbGetStatus $ip` = 1 ] ; then
       if [ $((banLength + `bddbGetTimes $ip`)) -lt $now ] ; then
         logLine 1 "Ban expired for $ip, removing from iptables"
         unBanIP $ip
@@ -184,7 +184,7 @@ bddbPurgeExpires () {
       else 
         logLine 2 "bddbPurgeExpires($ip) not expired yet"
       fi
-    elif [ `bddbGetStatus $ip` -eq 0 ] ; then
+    elif [ `bddbGetStatus $ip` = 0 ] ; then
       local times=`bddbGetTimes $ip | tr , _`
       local timeCount=`echo $times | wc -w`
       local lastTime=`echo $times | cut -d\  -f$timeCount`
@@ -219,7 +219,7 @@ bddbEvaluateRecord () {
     times=`echo $times | cut -d\  -f2-`
     timeCount=`echo $times | wc -w`
   done  
-  [ $didBan == 0 ] && logLine 2 "bddbEvaluateRecord($ip) does not exceed threshhold, skipping"
+  [ $didBan = 0 ] && logLine 2 "bddbEvaluateRecord($ip) does not exceed threshhold, skipping"
 }
 
 # Reads filtered log line and evaluates for action  Args: $1=log line
@@ -231,9 +231,9 @@ processLogLine () {
   local status="`bddbGetStatus $ip`"
   local oldTime
 
-  if [ "$status" == "-1" ] ; then
+  if [ "$status" = -1 ] ; then
     logLine 2 "processLogLine($ip,$time) IP is whitelisted"
-  elif [ "$status" == "1" ] ; then
+  elif [ "$status" = 1 ] ; then
     oldTime=`bddbGetTimes $ip`
     if [ $oldTime -ge $time ] ; then
       logLine 2 "processLogLine($ip,$time) already banned, ban timestamp already equal or newer"
@@ -242,7 +242,7 @@ processLogLine () {
       bddbEnableStatus $ip $time
     fi
     banIP $ip
-  elif [ ! -z $ip -a ! -z $time ] ; then
+  elif [ -n $ip -a -n $time ] ; then
     bddbAddRecord $ip $time
     logLine 2 "processLogLine($ip,$time) Added record, comparing"
     bddbEvaluateRecord $ip 
@@ -267,8 +267,8 @@ saveState () {
     bddbSave "$fileStateTemp"
     logLine 3 "saveState() now=`date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
   fi    
-  if [ $persistentStateWritePeriod -gt 0 ] || [ $persistentStateWritePeriod -eq 0 -a $forcePersistent -eq 1 ] ; then
-    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent -eq 1 ] ; then
+  if [ $persistentStateWritePeriod -gt 0 ] || [ $persistentStateWritePeriod = 0 -a $forcePersistent = 1 ] ; then
+    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent = 1 ] ; then
       if [ ! -f "$fileStatePersist" ] || ! cmp -s "$fileStateTemp" "$fileStatePersist" ; then
         logLine 2 "saveState() writing to persistent state file"
         bddbSave "$fileStatePersist"
