@@ -63,7 +63,7 @@ uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state f
 					# Consider the life of flash storage when setting this.  To make it write 
 					# on every run when using a mode other than follow, set it to 1.
 
-uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent BDDB (state/tracking) file - consider moving to USB
+uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent state file - consider moving to USB
 							# or SD storage if available to save wear & tear
 
 uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook the chain containing ban rules into
@@ -79,7 +79,7 @@ uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores fire
 
 uciLoad logTag "bearDropper[$$]"		# bearDropper syslog tag
 
-uciLoad fileStateTemp '/tmp/bearDropper.bddb'	# Temporary BDDB (state/tracking) file
+uciLoad fileStateTemp '/tmp/bearDropper.bddb'	# Temporary state file
 
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
 									# out auth fail log entries
@@ -89,7 +89,7 @@ uciLoad firewallTarget 'DROP'		# The target for a banned IP - you could use this
 
 uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tuning, ex: "logread -l250"
 
-uciLoad formatLogDate '%b %d %H:%M:%S %Y'	# The format of the syslog time stamp
+uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# The format of the syslog time stamp
 
 uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to check for expired bans if there
 					# no log activity 
@@ -129,7 +129,9 @@ logLine () {
 }
 
 # need to add validation just to be extra safe
-getLogTime () { date -d"`echo $1 | cut -f2-5 -d\ `" -D"$formatLogDate" +%s ;}
+getLogTime () { 
+  date -d"`echo $1 | cut -f2-5 -d\ `" -D"$formatLogDate" +%s || logLine 1 "ERROR: getLogTime date error ($1)"
+}
 
 # should be safe, sed output should fail null (but verify)
 getLogIP () { echo $1 | sed 's/^.*from \([0-9.]*\):[0-9]*$/\1/' ;}
@@ -163,7 +165,7 @@ banIP () {
     logLine 1 "Inserting ban rule for IP $ip into iptables chain $firewallChain"
     iptables -A $firewallChain -s $ip -j "$firewallTarget"
   else
-    logLine 2 "Ban rule for $ip already present in iptables chain"
+    logLine 3 "Ban rule for $ip already present in iptables chain"
   fi
 }
 
@@ -186,6 +188,7 @@ processEntry () {
   local entry=`bddbGetEntry "$1"`
   local times=`echo $entry | cut -d, -f2- | tr , \ `
   local timeCount=`echo $times | wc -w`
+  local didBan=0
 
   # condition 0 - not enough attempts, do nothing
   # condition 1 - attempts exceed threshhold in time period - ban!!!
@@ -194,16 +197,18 @@ processEntry () {
     firstTime=`echo $times | cut -d\  -f1`
     lastTime=`echo $times | cut -d\  -f$timeCount`
     timeDiff=$((lastTime - firstTime))
-  
     logLine 3 "processEntry($ip) count=$timeCount timeDiff=$timeDiff/$attemptPeriod"
     if [ $timeDiff -le $attemptPeriod ] ; then
       bddbEnableStatus $ip $lastTime
+      logLine 2 "processing $ip@$time: exceeded ban threshold, adding to iptables"
+      didBan=1
       banIP $ip
       break
     fi
     times=`echo $times | cut -d\  -f2-`
     timeCount=`echo $times | wc -w`
   done  
+  [ $didBan -eq 0 ] && logLine 2 "processing $ip@$time: recorded attempt in bddb"
 }
 
 # Reads raw log line, if needed, adds to BDDB runs processEntry for that line
@@ -220,15 +225,14 @@ processLine () {
   elif [ "$status" == "1" ] ; then
     oldTime=`bddbGetTimes $ip`
     if [ $oldTime -ge $time ] ; then
-      logLine 2 "processing $ip@$time: bad attempt - already banned, timer already new or newer"
+      logLine 2 "processing $ip@$time: already banned, ban timer already equal or newer"
     else
-      logLine 2 "processing $ip@$time: bad attempt - already banned, updating timer"
+      logLine 2 "processing $ip@$time: already banned, updating timer"
       bddbEnableStatus $ip $time
       saveState
     fi
     banIP $ip
   elif [ ! -z $ip -a ! -z $time ] ; then
-    logLine 2 "processing $ip@$time: bad attempt - recording"
     bddbAddEntry $ip $time
     saveState
     processEntry $ip
@@ -271,7 +275,7 @@ printUsage () {
 	    -l #   log level - 0=off, 1=standard, 2=verbose (def: $logLevel)
 	    -p #   attempt period which attempt counts must happen in (def: $attemptPeriod)
 	    -P #   persistent state file write period (def: $persistentStateWritePeriod)
-	    -s ... persistent state file location (def: $fileBDDBPersist)
+	    -s ... persistent state file location (def: $fileStatePersist)
 
 	  All time strings can be specified in seconds, or using BIND style
 	  time strings, ex: 1w2d3h5m30s is 1 week, 2 days, 3 hours, etc...
@@ -304,7 +308,7 @@ while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
       ;;
     P) persistentStateWritePeriod=$OPTARG
       ;;
-    s) fileBDDBPersist=$OPTARG
+    s) fileStatePersist=$OPTARG
       ;;
     *) printUsage
       exit 3
