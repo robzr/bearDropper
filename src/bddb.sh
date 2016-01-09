@@ -2,10 +2,17 @@
 #
 # bearDropper DB - basic storage routines for ultralight IP/status/epoch storage
 #
-# A BDDB record has one of three states:
-#   (whitelist) bddb_1_2_3_4=-1  
-#   (tracking)  bddb_1_2_3_4=0,12432345234[,23423422343]  (not blacklisted, but detected bad entrie(s))
-#   (blacklist) bddb_1_2_3_4=1,2342343243                 (blacklisted, time is last known bad attempt)
+# A BDDB record format is: 
+#
+#   bddb_($IPADDR)=$STATE,$TIME[,$TIME2...]
+#
+# Where IPADDR has periods replaced with underscores
+#       TIME is in epoch-seconds
+#
+# A BDDB record has one of three STATES:
+#   bddb_1_2_3_4=-1                            (whitelist)
+#   bddb_1_2_3_4=0,1452332535[,1452332536...]  (tracking, but not banned)
+#   bddb_1_2_3_4=1,1452332535`                 (banned)
 #
 # _BEGIN_MEAT_
 
@@ -66,6 +73,13 @@ bddbAddRecord () {
   bddbStateChange=1
 }
 
+# Args: $1 = IP address
+bddbRemoveRecord () {
+  local ip="`echo "$1" | tr . _`"
+  eval "unset bddb_$ip"
+  bddbStateChange=1
+}
+
 # Returns all IPs (not CIDR) present in records
 bddbGetAllIPs () { 
   local ipRaw record
@@ -76,6 +90,18 @@ bddbGetAllIPs () {
     fi
   done
 }
+
+# retrieve single IP record, Args: $1=IP
+bddbGetRecord () {
+  local record
+  record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  eval echo \$$record
+}
+
+# _END_MEAT_
+#
+# Test routines
+#
 
 # Dump bddb from environment for debugging 
 bddbDump () { 
@@ -93,17 +119,6 @@ bddbDump () {
   done
 } 
 
-# retrieve single IP record, Args: $1=IP
-bddbGetRecord () {
-  local record
-  record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
-  eval echo \$$record
-}
-
-# _END_MEAT_
-
-# Test routines
-#
 
 bddbFile=/tmp/bddb.db
 

@@ -18,28 +18,17 @@
 #     today mode - looks at log entries from the day it is being run, simple and lightweight, generally
 #        run from cron periodically (same simplistic behavior as dropBrute.sh)
 #     entire mode - runs through entire contents of the syslog ring buffer
-#
-# Here is an example uci config file (/etc/config/bearDropper)
-#
-# config bearDropper
-#   option defaultMode 		24h
-#   option attemptCount 	5
-#   option attemptPeriod 	1d
-#   option banLength    	1w
-#   option firewallHookChain 	input_wan_rule
-#   option firewallHookPosition	1
-#   list   whitelist		10.0.1.0/24
-#   list   whitelist		192.168.1.0/24
 
-# Loads config variables from uci - Args: $1 = variable_name (also used for uci option name), $2 = default_value
+# Loads config variables from uci
+# Args: $1 = variable_name (also used for uci option name), $2 = default_value
 uciLoad () {
   local getUci uciSection='bearDropper.@[0]'
   getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
   eval $1=\'$getUci\'
 }
 
-#
-## Common config variables - these can also be changed at runtime with command line options
+
+# Common config variables - these can also be changed at runtime with command line options
 #
 
 uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - modes are
@@ -73,8 +62,7 @@ uciLoad firewallHookPosition 1 		# position in firewall hook chain (-1 = don't a
 uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
 
 
-#
-##  Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
+# Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
 #
 
 uciLoad logTag "bearDropper[$$]"		# bearDropper syslog tag
@@ -188,12 +176,19 @@ wipeFirewall () {
 bddbPurgeExpires () {
   local now=`date +%s`
   bddbGetAllIPs | while read ip ; do
-    if [ `bddbGetStatus $ip` = 1 ] ; then
+    if [ `bddbGetStatus $ip` -eq 1 ] ; then
       if [ $((banLength + `bddbGetTimes $ip`)) -lt $now ] ; then
         logLine 1 "Ban expired for $ip, removing from iptables"
         unBanIP $ip
+        bddbRemoveRecord $1 
       else 
         logLine 2 "bddbPurgeExpires($ip) not expired yet"
+    elif [ `bddbGetStatus $ip` -eq 0 ] ; then
+      local times=`bddbGetTimes $ip | tr , _`
+      local timeCount=`echo $times | wc -w`
+      local lastTime=`echo $times | cut -d\  -f$timeCount`
+      if [ $((lastTime + attemptPeriod)) -lt $now ] ; then
+        bddbRemoveRecord $1 
     fi ; fi
   done
 }
