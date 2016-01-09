@@ -52,16 +52,16 @@ uciLoad attemptCount 5			# Failure attempts from a given IP required to trigger 
 uciLoad attemptPeriod 1d		# Time period threshold during which attemptCount must be exceeded in order to 
 					# trigger a ban.
 
-uciLoad banLength 1w			# How long a ban exist once the attempt threshhold is exceeded
+uciLoad banLength 1w			# How long a ban exist once the attempt threshold is exceeded
 
 uciLoad logLevel 1			# bearDropper log level, 0=silent 1=default, 2=verbose, 3=debug
 
 uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
 
-uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state file. 0 is never, otherwise a 
-					# time string can be used to specify minimum intervals between writes.
-					# Consider the life of flash storage when setting this.  To make it write 
-					# on every run when using a mode other than follow, set it to 1.
+uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state file. -1 is never, 0 is on program
+					# exit, and a time string can be used to specify minimum intervals between writes
+                                        # for periodic saving in follow mode.  Consider the life of flash storage when 
+                                        # setting this.
 
 uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent state file - consider moving to USB
 							# or SD storage if available to save wear & tear
@@ -93,10 +93,10 @@ uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# The format of the syslog time stamp
 
 uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to check for expired bans if there
 					# no log activity 
-# _LOAD_MEAT_
-#
+
 # Begin functions
 #
+# _LOAD_MEAT_
 
 isValidBindTime () { echo "$1" | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
 
@@ -106,8 +106,8 @@ expandBindTime () {
     echo $1
     return 0
   elif ! echo "$1" | egrep -iq '^([0-9]+[wdhms]?)+$' ; then
-    echo "Error: Invalid time specified ($1)" >&2
-    exit 3
+    logLine 0 "Error: Invalid time specified ($1)" >&2
+    exit 254
   fi
   local newTime=`echo $1 | sed 's/\b\([0-9]*\)w/\1*7d+/g' | sed 's/\b\([0-9]*\)d[ +]*/\1*24h+/g' | \
     sed 's/\b\([0-9]*\)h[ +]*/\1*60m+/g' | sed 's/\b\([0-9]*\)m[ +]*/\1*60s+/g' | sed 's/s//g' | sed 's/+$//'`
@@ -119,28 +119,30 @@ logLine () {
   [ $1 -gt $logLevel ] && return
   shift
   
-  if [ "$logFacility" == "stdout" ] ; then 
-    echo "$@"
-  elif [ "$logFacility" == "stderr" ] ; then 
-    echo "$@" >&2
-  else 
-    logger -t "$logTag" -p "$logFacility" "$@"
+  if [ "$logFacility" == "stdout" ] ; then echo "$@"
+  elif [ "$logFacility" == "stderr" ] ; then echo "$@" >&2
+  else logger -t "$logTag" -p "$logFacility" "$@"
   fi
 }
 
-# need to add validation just to be extra safe
-getLogTime () { 
-  date -d"`echo $1 | cut -f2-5 -d\ `" -D"$formatLogDate" +%s || logLine 1 "ERROR: getLogTime date error ($1)"
+# extra validation - fails safe.  Args: $1=log line
+getLogTime () {
+  local logDateString=`echo "$1" | sed -n 's/^[A-Z][a-z]* \([A-Z][a-z]*  *[0-9][0-9]*  *[0-9][0-9]*:[0-9][0-9]:[0-9][0-9] [0-9][0-9]*\) .*$/\1/p'`
+  date -d"$logDateString" -D"$formatLogDate" +%s || logLine 1 "Error: logDateString($logDateString) malformed line ($1)"
+#  echo TESTING:::date -d"$logDateString" -D"$formatLogDate" +%s:::
 }
 
-# should be safe, sed output should fail null (but verify)
-getLogIP () { echo $1 | sed 's/^.*from \([0-9.]*\):[0-9]*$/\1/' ;}
+# extra validation - fails safe.  Args: $1=log line
+getLogIP () { echo "$1" | sed -n 's/^.*from \([0-9.]*\):[0-9]*$/\1/p' ; }
 
-processAll () { :
-  # Run periodically, this will:
-  #  - add firewall hooks if needed
-  #  - add firewall rules if needed
-  #  - expunge expired records
+# Args: $1=IP
+unBanIP () {
+  if iptables -C $firewallChain -s $ip -j "$firewallTarget" 2>/dev/null ; then
+    logLine 1 "Removing ban rule for IP $ip from iptables"
+    iptables -D $firewallChain -s $ip -j "$firewallTarget"
+  else
+    logLine 3 "unBanIP() Ban rule for $ip not present in iptables"
+  fi
 }
 
 # Args: $1=IP
@@ -165,7 +167,7 @@ banIP () {
     logLine 1 "Inserting ban rule for IP $ip into iptables chain $firewallChain"
     iptables -A $firewallChain -s $ip -j "$firewallTarget"
   else
-    logLine 3 "Ban rule for $ip already present in iptables chain"
+    logLine 3 "banIP() rule for $ip already present in iptables chain"
   fi
 }
 
@@ -182,76 +184,100 @@ wipeFirewall () {
   fi
 }
 
+# expunge expired records
+bddbPurgeExpires () {
+  local now=`date +%s`
+  bddbGetAllIPs | while read ip ; do
+    if [ `bddbGetStatus $ip` = 1 ] ; then
+      if [ $((banLength + `bddbGetTimes $ip`)) -lt $now ] ; then
+        logLine 1 "Ban expired for $ip, removing from iptables"
+        unBanIP $ip
+      else 
+        logLine 2 "bddbPurgeExpires($ip) not expired yet"
+    fi ; fi
+  done
+}
+
 # Only used when status is already 0 and possibly going to 1, Args: $1=IP
-processEntry () {
-  local ip="$1" firstTime lastTime
-  local entry=`bddbGetEntry "$1"`
-  local times=`echo $entry | cut -d, -f2- | tr , \ `
+bddbEvaluateRecord () {
+  local ip=$1 firstTime lastTime
+  local times=`bddbGetRecord $1 | cut -d, -f2- | tr , \ `
   local timeCount=`echo $times | wc -w`
   local didBan=0
-
-  # condition 0 - not enough attempts, do nothing
-  # condition 1 - attempts exceed threshhold in time period - ban!!!
-  # condition 2 - attempts exceed threshhold, but period is too long - trim oldest time, recalculate
+  
+  # condition 0 - not enough attempts; do nothing
+  # condition 1 - attempts exceed threshold in time period; ban
+  # condition 2 - attempts exceed threshold but time period is too long; trim oldest time, recalculate
   while [ $timeCount -ge $attemptCount ] ; do
     firstTime=`echo $times | cut -d\  -f1`
     lastTime=`echo $times | cut -d\  -f$timeCount`
     timeDiff=$((lastTime - firstTime))
-    logLine 3 "processEntry($ip) count=$timeCount timeDiff=$timeDiff/$attemptPeriod"
+    logLine 3 "bddbEvaluateRecord($ip) count=$timeCount timeDiff=$timeDiff/$attemptPeriod"
     if [ $timeDiff -le $attemptPeriod ] ; then
       bddbEnableStatus $ip $lastTime
-      logLine 2 "processing $ip@$time: exceeded ban threshold, adding to iptables"
-      didBan=1
+      logLine 2 "bddbEvaluateRecord($ip) exceeded ban threshold, adding to iptables"
       banIP $ip
-      break
+      didBan=1
     fi
+    # slice one off the front, see what happens now.
     times=`echo $times | cut -d\  -f2-`
     timeCount=`echo $times | wc -w`
   done  
-  [ $didBan -eq 0 ] && logLine 2 "processing $ip@$time: recorded attempt in bddb"
+  [ $didBan == 0 ] && logLine 2 "bddbEvaluateRecord($ip) does not exceed threshhold, skipping"
 }
 
-# Reads raw log line, if needed, adds to BDDB runs processEntry for that line
-processLine () {
+# Reads filtered log line and evaluates for action  Args: $1=log line
+processLogLine () {
   local time=`getLogTime "$1"` 
   local ip=`getLogIP "$1"` 
   local timeNow=`date +%s`
   local timeFirst=$((timeNow - attemptPeriod))
   local status="`bddbGetStatus $ip`"
-  local entry oldTime
+  local oldTime
 
   if [ "$status" == "-1" ] ; then
-    logLine 2 "processing $ip@$time: IP is whitelisted"
+    logLine 2 "processLogLine($ip,$time) IP is whitelisted"
   elif [ "$status" == "1" ] ; then
     oldTime=`bddbGetTimes $ip`
     if [ $oldTime -ge $time ] ; then
-      logLine 2 "processing $ip@$time: already banned, ban timer already equal or newer"
+      logLine 2 "processLogLine($ip,$time) already banned, ban timestamp already equal or newer"
     else
-      logLine 2 "processing $ip@$time: already banned, updating timer"
+      logLine 2 "processLogLine($ip,$time) already banned, updating ban timestamp"
       bddbEnableStatus $ip $time
-      saveState
     fi
     banIP $ip
   elif [ ! -z $ip -a ! -z $time ] ; then
-    bddbAddEntry $ip $time
-    saveState
-    processEntry $ip
+    bddbAddRecord $ip $time
+    logLine 2 "processLogLine($ip,$time) Added record, comparing"
+    bddbEvaluateRecord $ip 
   else
-    logLine 1 "processLine() malformed line: $1"
+    logLine 1 "processLogLine($ip,$time) malformed line ($1)"
   fi
 }
 
+loadState () {
+  bddbLoad "$fileStatePersist"
+  bddbLoad "$fileStateTemp"
+}
+
+# we need to add intelligent differnetal between temp & perm
+# Args, $1=-f to force a persistent write (unless lastPersistentStateWrite=-1)
 saveState () {
+  local forcePersistent=0
+  [ "$1" = "-f" ] && forcePersistent=1
+
   if [ $bddbStateChange -gt 0 ] ; then
-    logLine 3 "Saving state change to temp file..."
+    logLine 3 "saveState() saving to temp state file"
     bddbSave "$fileStateTemp"
-    logLine 3 "saveState date: `date +%s` lPSW: $lastPersistentStateWrite pSWP: $persistentStateWritePeriod"
-    if [ $((`date +%s` - lastPersistentStateWrite)) -gt $persistentStateWritePeriod ] ; then
-      logLine 2 "Saving state change to persistent file..."
-      bddbSave "$fileStatePersist"
-      lastPersistentStateWrite="`date +%s`"
-    fi
-  fi
+    logLine 3 "saveState() now=`date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
+  fi    
+  if [ $persistentStateWritePeriod -gt 0 ] || [ $persistentStateWritePeriod -eq 0 -a $forcePersistent -eq 1 ] ; then
+    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent -eq 1 ] ; then
+      if [ ! -f "$fileStatePersist" ] || ! cmp -s "$fileStateTemp" "$fileStatePersist" ; then
+        logLine 2 "saveState() writing to persistent state file"
+        bddbSave "$fileStatePersist"
+        lastPersistentStateWrite="`date +%s`"
+  fi ; fi ; fi
 }
 
 printUsage () {
@@ -267,7 +293,7 @@ printUsage () {
 
 	  Options
 	    -a #   attempt count before banning (def: $attemptCount)
-	    -b #   ban length once attempts hit threshhold (def: $banLength)
+	    -b #   ban length once attempts hit threshold (def: $banLength)
 	    -c ... firewall chain to record bans (def: $firewallChain)
 	    -C ... firewall chain to hook into (def: $firewallHookChain)
 	    -f ... log facility (syslog facility or stdout/stderr) (def: $logFacility)
@@ -311,7 +337,7 @@ while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
     s) fileStatePersist=$OPTARG
       ;;
     *) printUsage
-      exit 3
+      exit 254
   esac
   shift `expr $OPTIND - 1`
 done
@@ -326,30 +352,61 @@ timeNow=`date +%s`
 timeFirst=$((timeNow - attemptPeriod))
 lastPersistentStateWrite=$timeNow
 
-bddbLoad "$fileStatePersist"
-bddbLoad "$fileStateTemp"
+loadState
 
 # main event loops
-if [ "$logMode" = 'follow' ] ; then 
+if [ "$logMode" = follow ] ; then 
   logLine 2 "Running in follow mode..."
-  $cmdLogread -f | egrep "$regexLogString" | while true ; do
-    read -t $followModePurgeInterval line && processLine "$line"
+  local readsSinceSave=0
+  trap "saveState -f" SIGHUP
+  trap "saveState -f ; exit " SIGINT
+  $cmdLogread -f | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while true ; do
+    if read -t $followModePurgeInterval line ; then
+      processLogLine "$line"
+      # instead of 30, should be persistentStateWritePeriod / followModePurgeInterval
+      if [ $((++readsSinceSave)) -ge 30 ] ; then
+        bddbPurgeExpires
+        saveState
+        readsSinceSave=0
+      fi
+    else
+      bddbPurgeExpires
+      saveState
+      readsSinceSave=0
+    fi
   done
-elif [ "$logMode" = 'entire' ] ; then 
+elif [ "$logMode" = entire ] ; then 
   logLine 2 "Running in entire mode..."
-  $cmdLogread | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
-elif [ "$logMode" = 'today' ] ; then 
+  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while read line ; do 
+    processLogLine "$line" 
+    saveState
+  done
+  loadState
+  bddbPurgeExpires
+  saveState -f
+elif [ "$logMode" = today ] ; then 
   logLine 2 "Running in today mode..."
-  $cmdLogread | egrep "`date +'^%a %b %e ..:..:.. %Y'`" | egrep "$regexLogString" | while read line ; do processLine "$line" ; done
+  $cmdLogread | egrep "`date +'^%a %b %e ..:..:.. %Y'`" | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | \
+    while read line ; do 
+      processLogLine "$line" 
+      saveState
+    done
+  loadState
+  bddbPurgeExpires
+  saveState -f
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))
-  $cmdLogread | egrep "$regexLogString" | while read line ; do
+  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while read line ; do
     timeWhen=`getLogTime "$line"`
-    [ $timeWhen -ge $timeStart ] && processLine "$line"
+    [ $timeWhen -ge $timeStart ] && processLogLine "$line"
+    saveState
   done
-elif [ "$logMode" = 'wipe' ] ; then 
+  loadState
+  bddbPurgeExpires
+  saveState -f
+elif [ "$logMode" = wipe ] ; then 
   logLine 2 "Wiping state files, unhooking and removing iptables chains"
   wipeFirewall
   if [ -f "$fileStateTemp" ] ; then
@@ -361,6 +418,6 @@ elif [ "$logMode" = 'wipe' ] ; then
     rm -f "$fileStatePersist"
   fi
 else
-  logLine 0 "Error - invalid log mode $logMode"
-  exit 3
+  logLine 0 "Error: invalid log mode ($logMode)"
+  exit 254
 fi

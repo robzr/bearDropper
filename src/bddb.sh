@@ -1,11 +1,8 @@
 #!/bin/sh
 #
-# bearDropper DB - storage routines for ultralight IP/status/epoch storage
+# bearDropper DB - basic storage routines for ultralight IP/status/epoch storage
 #
-# TBD: Add functionality to distinguish between save to flash vs save to memory, 
-#      using interim save to flash, diff, then mv to avoid unnecessary flash writes
-#
-# A BDDB entry has one of three states:
+# A BDDB record has one of three states:
 #   (whitelist) bddb_1_2_3_4=-1  
 #   (tracking)  bddb_1_2_3_4=0,12432345234[,23423422343]  (not blacklisted, but detected bad entrie(s))
 #   (blacklist) bddb_1_2_3_4=1,2342343243                 (blacklisted, time is last known bad attempt)
@@ -39,27 +36,27 @@ bddbSave () {
   bddbStateChange=0 
 }
 
-# Set bddb entry to status=1, update ban time flag with newest
+# Set bddb record status=1, update ban time flag with newest
 # Args: $1=IP Address $2=timeFlag
 bddbEnableStatus () {
-  local entry=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  local record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
   local newestTime=`bddbGetTimes $1 | sed 's/.* //' | xargs echo $2 | tr \  '\n' | sort -n | tail -1 `
-  eval $entry="1,$newestTime"
+  eval $record="1,$newestTime"
   bddbStateChange=1
 }
 
 # Args: $1=IP Address
 bddbGetStatus () {
-  bddbGetEntry $1 | cut -d, -f1
+  bddbGetRecord $1 | cut -d, -f1
 }
 
 # Args: $1=IP Address
 bddbGetTimes () {
-  bddbGetEntry $1 | cut -d, -f2-
+  bddbGetRecord $1 | cut -d, -f2-
 }
 
 # Args: $1 = IP address, $2 [$3 ...] = timestamp (seconds since epoch)
-bddbAddEntry () {
+bddbAddRecord () {
   local ip="`echo "$1" | tr . _`" ; shift
   local newEpochList="$@" status="`eval echo \\\$bddb_$ip | cut -f1 -d,`"
   local oldEpochList="`eval echo \\\$bddb_$ip | cut -f2- -d,  | tr , \ `" 
@@ -69,46 +66,43 @@ bddbAddEntry () {
   bddbStateChange=1
 }
 
+# Returns all IPs (not CIDR) present in records
+bddbGetAllIPs () { 
+  local ipRaw record
+  set | egrep '^bddb_[0-9_]*=' | tr \' \  | while read record ; do
+    ipRaw=`echo $record | cut -f1 -d= | sed 's/^bddb_//'`
+    if [ `echo $ipRaw | tr _ \  | wc -w` -eq 4 ] ; then
+      echo $ipRaw | tr _ .
+    fi
+  done
+}
+
 # Dump bddb from environment for debugging 
 bddbDump () { 
-  local ip ipRaw status times time entry
-  set | egrep '^bddb_[0-9_]*=' | tr \' \  | while read entry ; do
-    ipRaw=`echo $entry | cut -f1 -d= | sed 's/^bddb_//'`
+  local ip ipRaw status times time record
+  set | egrep '^bddb_[0-9_]*=' | tr \' \  | while read record ; do
+    ipRaw=`echo $record | cut -f1 -d= | sed 's/^bddb_//'`
     if [ `echo $ipRaw | tr _ \  | wc -w` -eq 5 ] ; then
       ip=`echo $ipRaw | sed 's/\([0-9_]*\)_\([0-9][0-9]*\)$/\1\/\2/' | tr _ .`
     else
       ip=`echo $ipRaw | tr _ .`
     fi
-    status=`echo $entry | cut -f2 -d= | cut -f1 -d,`
-    times=`echo $entry | cut -f2 -d= | cut -f2- -d,`
+    status=`echo $record | cut -f2 -d= | cut -f1 -d,`
+    times=`echo $record | cut -f2 -d= | cut -f2- -d,`
     for time in `echo $times | tr , \ ` ; do printf 'IP (%s) (%s): %s\n' "$ip" "$status" "$time" ; done
   done
 } 
 
-# retrieve single IP entry, Args: $1=IP
-bddbGetEntry () {
-  local entry
-  entry=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
-  eval echo \$$entry
-}
-
-# Expires old times - this is probably obsolete (integrate to bearDropper.sh)
-#
-# Args: $1 = attemptPeriod $2 = attemptCount
-bddbProcess () {
-  local now=`date +%s` ip ipRaw times entry attemptPeriod="$1" attemptCount="$2"
-  set | egrep '^bddb_[0-9_]*=' | tr \' \  | while read entry ; do
-    ipRaw=`echo $entry | cut -f1 -d= | sed 's/^bddb_//'`
-    ip=`echo $ipRaw | tr _ .`
-    times=`echo $entry | cut -f2 -d=`
-    for time in `echo $times | tr , \ ` ; do printf 'IP (%s) (%s): %s\n' "$ip" "$status" "$time" ; done
-  done
-  bddbStateChange=1 # don't forget to set this if there are any changes !
+# retrieve single IP record, Args: $1=IP
+bddbGetRecord () {
+  local record
+  record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  eval echo \$$record
 }
 
 # _END_MEAT_
-#
-# Here is the beginning of the test routines
+
+# Test routines
 #
 
 bddbFile=/tmp/bddb.db
@@ -119,36 +113,36 @@ bddb_10_0_1_0_24=-1
 bddb_64_242_113_77=1,1442000000,1442001000,1442002000
 _EOF_
 
-echo Save file is $bddbFile
+echo save file is $bddbFile
 
-echo Environment has `bddbCount` entries, Clearing and Dumping
+echo Environment has `bddbCount` entries, clearing and .umping
 bddbClear ; bddbDump
 
 echo Environment has `bddbCount` entries
 
-echo Loading...
+echo Loading
 bddbLoad "$bddbFile"
 
-echo loaded `bddbCount` entries, Dumping
+echo Loaded `bddbCount` entries, dumping
 bddbDump
 
-echo "Creating a new entry (1.2.3.4)"
-bddbAddEntry 1.2.3.4 1440001234
+echo "creating a new record (1.2.3.4)"
+bddbAddRecord 1.2.3.4 1440001234
 
-echo "Adding to an existing entry (2.3.4.5)"
-bddbAddEntry 2.3.4.5 1442000001 1441999999 
+echo "adding to an existing record (2.3.4.5)"
+bddbAddRecord 2.3.4.5 1442000001 1441999999 
 
-echo "Adding to an existing entry (64.242.113.77)"
-bddbAddEntry 64.242.113.77 1441999999 1442999999 1442001050
+echo "Adding to an existing record (64.242.113.77)"
+bddbAddRecord 64.242.113.77 1441999999 1442999999 1442001050
 
-echo Saving and Dumping
+echo saving and dumping
 bddbSave "$bddbFile" ; bddbDump
 
-echo Clearing and Dumping
+echo clearing and dumping
 bddbClear ; bddbDump
 
-echo Loading and Dumping
+echo loading and dumping
 bddbLoad "$bddbFile" ; bddbDump
 
-echo Removing file
+echo removing file
 rm "$bddbFile"
