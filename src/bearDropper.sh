@@ -183,6 +183,7 @@ bddbPurgeExpires () {
         bddbRemoveRecord $1 
       else 
         logLine 2 "bddbPurgeExpires($ip) not expired yet"
+      fi
     elif [ `bddbGetStatus $ip` -eq 0 ] ; then
       local times=`bddbGetTimes $ip | tr , _`
       local timeCount=`echo $times | wc -w`
