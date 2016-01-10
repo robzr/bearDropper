@@ -10,6 +10,7 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
  - (optional) records state to persistent storage, with intelligent routines to avoid excessive flash writes
  - (optional) self installs hook into iptables for simple and reliable setup
  - (optional) logs actions to syslog (via logger)
+ - stripping all comments shrinks to 62% file space, gzips to 18%
 
 TBD:
  - more testing of expiration logic

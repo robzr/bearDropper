@@ -185,7 +185,7 @@ bddbPurgeExpires () {
         logLine 2 "bddbPurgeExpires($ip) not expired yet"
       fi
     elif [ `bddbGetStatus $ip` = 0 ] ; then
-      local times=`bddbGetTimes $ip | tr , _`
+      local times=`bddbGetTimes $ip | tr , \ `
       local timeCount=`echo $times | wc -w`
       local lastTime=`echo $times | cut -d\  -f$timeCount`
       if [ $((lastTime + attemptPeriod)) -lt $now ] ; then
