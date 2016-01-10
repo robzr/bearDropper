@@ -27,7 +27,6 @@ uciLoad () {
   eval $1=\'$getUci\'
 }
 
-
 # Common config variables - these can also be changed at runtime with command line options
 #
 
@@ -52,8 +51,9 @@ uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state f
                                         # for periodic saving in follow mode.  Consider the life of flash storage when 
                                         # setting this.
 
-uciLoad fileStatePersist '/etc/bearDropper.bddb'	# Persistent state file - consider moving to USB
-							# or SD storage if available to save wear & tear
+uciLoad fileStateTempPrefix "/tmp/bearDropper"	# Temporary state file prefix
+
+uciLoad fileStatePersistPrefix "/etc/bearDropper" # Persistent state file prefix, consider relocating off built in flash
 
 uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook the chain containing ban rules into
 
@@ -61,26 +61,19 @@ uciLoad firewallHookPosition 1 		# position in firewall hook chain (-1 = don't a
 
 uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
 
+uciLoad firewallTarget 'DROP'
 
 # Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
 #
 
-uciLoad logTag "bearDropper[$$]"		# bearDropper syslog tag
-
-uciLoad fileStateTemp '/tmp/bearDropper.bddb'	# Temporary state file
-
-uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# Regex to look for when initially parsing 
-									# out auth fail log entries
-
-uciLoad firewallTarget 'DROP'		# The target for a banned IP - you could use this to jump to a custom chain
-					# for logging, launching external commands, etc.
-
-uciLoad cmdLogread 'logread'		# logread command, parameters can be added for tuning, ex: "logread -l250"
-
-uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# The format of the syslog time stamp
-
-uciLoad followModePurgeInterval 10m  	# Time period, when in follow mode, to check for expired bans if there
-					# no log activity 
+uciLoad fileStateType 'bddbz'						# bddb (plaintext) bddbz (compressed)
+uciLoad followModePurgeInterval 10m					# how often to attempt to purge expired bans when in follow mode
+uciLoad syslogTag "bearDropper[$$]"
+uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# only lines matching regexLogString are processed
+uciLoad regexLogStringInverse 'has invalid shell, rejected$' 		# but first lines matching regexLogStringInverse are filtered out
+uciLoad cmdLogread 'logread'						# parameters can be added for tuning, ex: "logread -l250"
+uciLoad formatLogDate '%b %e %H:%M:%S %Y'				# used to slurp syslog dates
+uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'			# used for today mode filtering
 
 # Begin functions
 #
@@ -109,7 +102,7 @@ logLine () {
   
   if [ "$logFacility" = "stdout" ] ; then echo "$@"
   elif [ "$logFacility" = "stderr" ] ; then echo "$@" >&2
-  else logger -t "$logTag" -p "$logFacility" "$@"
+  else logger -t "$syslogTag" -p "$logFacility" "$@"
   fi
 }
 
@@ -242,7 +235,7 @@ processLogLine () {
       bddbEnableStatus $ip $time
     fi
     banIP $ip
-  elif [ -n $ip -a -n $time ] ; then
+  elif [ -n "$ip" -a -n "$time" ] ; then
     bddbAddRecord $ip $time
     logLine 2 "processLogLine($ip,$time) Added record, comparing"
     bddbEvaluateRecord $ip 
@@ -252,8 +245,8 @@ processLogLine () {
 }
 
 loadState () {
-  bddbLoad "$fileStatePersist"
-  bddbLoad "$fileStateTemp"
+  bddbLoad "$fileStatePersistPrefix" "$fileStateType"
+  bddbLoad "$fileStateTempPrefix" "$fileStateType"
 }
 
 # we need to add intelligent differnetal between temp & perm
@@ -264,27 +257,27 @@ saveState () {
 
   if [ $bddbStateChange -gt 0 ] ; then
     logLine 3 "saveState() saving to temp state file"
-    bddbSave "$fileStateTemp"
+    bddbSave "$fileStateTempPrefix" "$fileStateType"
     logLine 3 "saveState() now=`date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
   fi    
   if [ $persistentStateWritePeriod -gt 0 ] || [ $persistentStateWritePeriod = 0 -a $forcePersistent = 1 ] ; then
     if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent = 1 ] ; then
       if [ ! -f "$fileStatePersist" ] || ! cmp -s "$fileStateTemp" "$fileStatePersist" ; then
         logLine 2 "saveState() writing to persistent state file"
-        bddbSave "$fileStatePersist"
+        bddbSave "$fileStatePersistPrefix" "$fileStateType"
         lastPersistentStateWrite="`date +%s`"
   fi ; fi ; fi
 }
 
 printUsage () {
   cat <<-_EOF_
-	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-l #] [-f ...] [-F #] [-p #] [-P #] [-s ...]
+	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-f ...] [-F #] [-l #] [-j ...] [-p #] [-P #] [-s ...]
 
 	  Running Modes (-m) (def: $defaultMode)
 	    follow     constantly monitors log
 	    entire     processes entire log contents
 	    today      processes log entries from same day only
-	    ...        interval mode, specify time string or seconds
+	    #          interval mode, specify time string or seconds
 	    wipe       wipe state files, unhook and remove firewall chain
 
 	  Options
@@ -294,10 +287,12 @@ printUsage () {
 	    -C ... firewall chain to hook into (def: $firewallHookChain)
 	    -f ... log facility (syslog facility or stdout/stderr) (def: $logFacility)
 	    -F #   firewall chain hook position (def: $firewallHookPosition)
+	    -j ... firewall target (def: $firewallTarget)
 	    -l #   log level - 0=off, 1=standard, 2=verbose (def: $logLevel)
 	    -p #   attempt period which attempt counts must happen in (def: $attemptPeriod)
 	    -P #   persistent state file write period (def: $persistentStateWritePeriod)
-	    -s ... persistent state file location (def: $fileStatePersist)
+	    -s ... persistent state file prefix (def: $fileStatePersistPrefix)
+	    -t ... temporary state file prefix (def: $fileStateTempPrefix)
 
 	  All time strings can be specified in seconds, or using BIND style
 	  time strings, ex: 1w2d3h5m30s is 1 week, 2 days, 3 hours, etc...
@@ -308,7 +303,7 @@ printUsage () {
 #  Begin main logic
 #
 unset logMode
-while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
+while getopts a:b:c:C:f:F:hj:l:m:p:P:s:t: arg ; do
   case "$arg" in 
     a) attemptCount=$OPTARG
       ;;
@@ -322,6 +317,8 @@ while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
       ;;
     F) firewallHookPosition=$OPTARG
       ;;
+    j) firewallTarget=$OPTARG
+      ;;
     l) logLevel=$OPTARG
       ;;
     m) logMode=$OPTARG
@@ -330,7 +327,9 @@ while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
       ;;
     P) persistentStateWritePeriod=$OPTARG
       ;;
-    s) fileStatePersist=$OPTARG
+    s) fileStatePersistPrefix=$OPTARG
+      ;;
+    s) fileStatePersistPrefix=$OPTARG
       ;;
     *) printUsage
       exit 254
@@ -339,6 +338,8 @@ while getopts a:b:c:C:f:F:hl:m:p:P:s: arg ; do
 done
 [ -z $logMode ] && logMode="$defaultMode"
 
+fileStateTemp="$fileStateTempPrefix.$fileStateType"
+fileStatePersist="$fileStatePersistPrefix.$fileStateType"
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
@@ -356,11 +357,11 @@ if [ "$logMode" = follow ] ; then
   local readsSinceSave=0
   trap "saveState -f" SIGHUP
   trap "saveState -f ; exit " SIGINT
-  $cmdLogread -f | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while true ; do
+#  $cmdLogread -f | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while true ; do
+  $cmdLogread -f | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while true ; do
     if read -t $followModePurgeInterval line ; then
       processLogLine "$line"
-      # instead of 30, should be persistentStateWritePeriod / followModePurgeInterval
-      if [ $((++readsSinceSave)) -ge 30 ] ; then
+      if [ $((++readsSinceSave)) -ge $((persistentStateWritePeriod / followModePurgeInterval)) ] ; then
         bddbPurgeExpires
         saveState
         readsSinceSave=0
@@ -373,7 +374,8 @@ if [ "$logMode" = follow ] ; then
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 2 "Running in entire mode..."
-  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while read line ; do 
+#  $cmdLogread | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
+  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
     processLogLine "$line" 
     saveState
   done
@@ -382,7 +384,8 @@ elif [ "$logMode" = entire ] ; then
   saveState -f
 elif [ "$logMode" = today ] ; then 
   logLine 2 "Running in today mode..."
-  $cmdLogread | egrep "`date +'^%a %b %e ..:..:.. %Y'`" | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | \
+#  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
+  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
     while read line ; do 
       processLogLine "$line" 
       saveState
@@ -394,7 +397,8 @@ elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((timeNow - logInterval))
-  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogString/p" | while read line ; do
+#  $cmdLogread | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do
+  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLogLine "$line"
     saveState

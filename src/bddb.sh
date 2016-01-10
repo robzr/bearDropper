@@ -1,18 +1,24 @@
 #!/bin/sh
 #
-# bearDropper DB - basic storage routines for ultralight IP/status/epoch storage
+# bearDropper DB - storage routines for ultralight IP/status/epoch storage
 #
-# A BDDB record format is: 
+# A BDDB record format is: bddb_($IPADDR)=$STATE,$TIME[,$TIME...]
 #
-#   bddb_($IPADDR)=$STATE,$TIME[,$TIME2...]
-#
-# Where IPADDR has periods replaced with underscores
-#       TIME is in epoch-seconds
+# Where: IPADDR has periods replaced with underscores
+#        TIME is in epoch-seconds
 #
 # A BDDB record has one of three STATES:
-#   bddb_1_2_3_4=-1                            (whitelist)
+#   bddb_1_2_3_4=-1                            (whitelisted IP or network)
 #   bddb_1_2_3_4=0,1452332535[,1452332536...]  (tracking, but not banned)
-#   bddb_1_2_3_4=1,1452332535`                 (banned)
+#   bddb_1_2_3_4=1,1452332535`                 (banned, time=effective ban beginning)
+#
+# BDDB records exist in RAM usually, but using bddbSave & bddbLoad, they are 
+# written on (ram)disk with optional compression 
+#
+# Partially implemented is IPADDR being in CIDR format, with a fifth octet
+# at the end, being the mask.  Ex: bddb_192_168_1_0_24=....
+#
+# TBD: finish CIDR support, add lookup/match routines
 #
 # _BEGIN_MEAT_
 
@@ -30,18 +36,30 @@ bddbCount () { set | egrep '^bddb_[0-9_]*=' | wc -l ; }
 
 # Loads existing bddb file into environment, Arg: $1 = file
 bddbLoad () { 
-  local loadFile="$1"
+  local loadFile="$1.$2" fileType="$2"
   bddbClear 
-  [ -f "$loadFile" ] && . "$loadFile"
+  if [ "$fileType" = bddb ] ; then
+    . "$loadFile"
+  elif [ "$fileType" = bddbz -a -f "$loadFile" ] ; then
+    local tmpFile="`mktemp`"
+    zcat $loadFile > "$tmpFile"
+    . "$tmpFile"
+    rm -f "$tmpFile"
+  fi
   bddbStateChange=0
 }
 
 # Saves environment bddb entries to file, Arg: $1 = file to save in
 bddbSave () { 
-  local saveFile="$1"
-  set | egrep '^bddb_[0-9_]*=' | sed s/\'//g > "$saveFile"
+  local saveFile="$1.$2" fileType="$2"
+  if [ "$fileType" = bddb ] ; then
+    set | egrep '^bddb_[0-9_]*=' | sed s/\'//g > "$saveFile"
+  elif [ "$fileType" = bddbz ] ; then
+    set | egrep '^bddb_[0-9_]*=' | sed s/\'//g | gzip -c > "$saveFile"
+  fi
   bddbStateChange=0 
 }
+
 
 # Set bddb record status=1, update ban time flag with newest
 # Args: $1=IP Address $2=timeFlag
@@ -119,45 +137,47 @@ bddbDump () {
   done
 } 
 
+bddbFilePrefix=/tmp/bddbtest
+bddbFileType=bddbz
 
-bddbFile=/tmp/bddb.db
-
-cat > "$bddbFile" <<_EOF_
+echo seeding
 bddb_2_3_4_5=0,1442000000
 bddb_10_0_1_0_24=-1
 bddb_64_242_113_77=1,1442000000,1442001000,1442002000
-_EOF_
 
-echo save file is $bddbFile
+echo saving
+bddbSave "$bddbFilePrefix" "$bddbFileType"
 
-echo Environment has `bddbCount` entries, clearing and .umping
+echo environment has `bddbCount` entries, clearing and dumping
 bddbClear ; bddbDump
 
-echo Environment has `bddbCount` entries
+echo environment has `bddbCount` entries
 
-echo Loading
-bddbLoad "$bddbFile"
+echo loading
+bddbLoad "$bddbFilePrefix" "$bddbFileType"
 
-echo Loaded `bddbCount` entries, dumping
+echo loaded `bddbCount` entries, dumping
 bddbDump
 
-echo "creating a new record (1.2.3.4)"
+echo creating a new record \(1.2.3.4\)
 bddbAddRecord 1.2.3.4 1440001234
 
-echo "adding to an existing record (2.3.4.5)"
+echo adding to an existing record \(2.3.4.5\)
 bddbAddRecord 2.3.4.5 1442000001 1441999999 
 
-echo "Adding to an existing record (64.242.113.77)"
+echo adding to an existing record \(64.242.113.77\)
 bddbAddRecord 64.242.113.77 1441999999 1442999999 1442001050
 
 echo saving and dumping
-bddbSave "$bddbFile" ; bddbDump
+bddbSave "$bddbFilePrefix" "$bddbFileType"
+bddbDump
 
 echo clearing and dumping
 bddbClear ; bddbDump
 
 echo loading and dumping
-bddbLoad "$bddbFile" ; bddbDump
+bddbLoad "$bddbFilePrefix" "$bddbFileType"
+bddbDump
 
 echo removing file
-rm "$bddbFile"
+rm "$bddbFilePrefix.$bddbFileType"
