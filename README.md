@@ -1,19 +1,21 @@
 ## bearDropper 
---Rob Zwissler @robzr
 
 **dropbear log parsing ban agent for OpenWRT (Chaos Calmer rewrite of dropBrute.sh)**
+  --Rob Zwissler @robzr
 
 OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connection attempts (embedded fail2ban)
 
-Dependencies: nothing (stock Chaos Calmer - written entirely in busybox ash)
+Dependencies: no external dependencies - written entirely in busybox ash
 
 Installation:
+
 	opkg install http://........
 	/etc/init.d/bearDropper enable
 	/etc/init.d/bearDropper start
+
   - To modify the config options, edit the uci config file (/etc/config/bearDropper)
-  - To see options for run-time config, run bearDropper -h (run time options override uci config options)
-  - Consider increasing your syslog ring buffer size if you have memory to spare - see /etc/config/system option log_size (in kb), particularily if not using follow mode
+  - Use bearDropper -h to see options for runtime config (runtime options override uci config options)
+  - Consider increasing your syslog ring buffer size if you have memory to spare (/etc/config/system option log_size), particularily if not using follow mode
 
 Logging: 
   - logs to the syslog ring buffer by default (view with the logread command)
@@ -22,24 +24,26 @@ Logging:
 
 Features:
  - lightweight, small size, uses only out of the box OpenWRT commands
- - uses a self managed state database, which iptables is periodically sync'd (for resiliency)
+ - uses a self managed state database, from which iptables is periodically sync'd (for resiliency)
+ - state database file(s) are compressed by default (easily disabled with config option)
  - runs using sane defaults out of the box, uses uci for config, overwriteable via command line arguments
  - supports whitelisting of IP addresses or CIDR blocks (TBD)
  - uses highly readable BIND9 time format for all time values
- - (default) running mode uses init script to follow the log in real-time
- - (optional) 3 other running modes can runs periodically/scheduled to optimize for low memory or serial/batch style usage
- - (optional) records state to persistent storage, with intelligent routines to avoid excessive flash writes
- - (optional) self installs hook into iptables for simple and reliable setup
- - stripping all comments shrinks to 62% file space, gzips to 18%
+ - default running mode follows the log in real-time (usually run via included init script)
+ - 3 other available running modes that examine historical logs (to optimize for low memory or serial/batch style usage)
+ - (optional) records state file to persistent storage with intelligent routines to avoid excessive flash writes
+ - self installs hook into iptables for simple and reliable setup (easily disabled)
+ - stripping all comments shrinks to 62% file space, gzip shrinks to 18% (if 20k is too big for ya)
+ - lots of input validation for paranoid prevention of injection attacks
 
 TBD:
- - optional inline compression on bddb (bddbz)
  - make whitelisting functional
  - procd init script
  - opkg, incorporate to makefile
  - native CIDR processing for better whitelisting/banning (/24 based bans?)
  - possibly add (optional) ipset support instead of chain based ?
  - support for a file based syslog
+ - more pipeline optimization to reduce running memory
  - ipv6
 
 Also see the sister project for sync'ing with RBLs: https://github.com/robzr/sub2rbl
