@@ -5,9 +5,10 @@
 
 OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connection attempts (embedded fail2ban)
 
-Dependencies: no external dependencies - written entirely in busybox ash
+**Dependencies** 
+  - no external dependencies - written entirely in busybox ash
 
-Installation:
+**Installation**
 
 	opkg install http://........
 	/etc/init.d/bearDropper enable
@@ -17,12 +18,12 @@ Installation:
   - Use bearDropper -h to see options for runtime config (runtime options override uci config options)
   - Consider increasing your syslog ring buffer size if you have memory to spare (/etc/config/system option log_size), particularily if not using follow mode
 
-Logging: 
+**Logging**
   - logs to the syslog ring buffer by default (view with the logread command)
   - can log to stdout by changing the config option logFacility in the config file or by using the command line option -f (ex: -f stdout)
   - Verbosity changed with the config option logLevel or by using -l (for increased verbosity use: -l 2)
 
-Features:
+**Features**
  - lightweight, small size, uses only out of the box OpenWRT commands
  - uses a self managed state database, from which iptables is periodically sync'd (for resiliency)
  - state database file(s) are compressed by default (easily disabled with config option)
@@ -36,7 +37,7 @@ Features:
  - stripping all comments shrinks to 62% file space, gzip shrinks to 18% (if 20k is too big for ya)
  - lots of input validation for paranoid prevention of injection attacks
 
-TBD:
+**TBD**
  - make whitelisting functional
  - procd init script
  - opkg, incorporate to makefile
@@ -46,5 +47,5 @@ TBD:
  - more pipeline optimization to reduce running memory
  - ipv6
 
-Also see the sister project for sync'ing with RBLs: https://github.com/robzr/sub2rbl
+Also see the sister project sub2rbl for RBL based banning: https://github.com/robzr/sub2rbl
 
