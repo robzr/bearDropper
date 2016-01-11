@@ -39,7 +39,7 @@ uciLoad attemptPeriod 12h
 uciLoad banLength 1w
 uciLoad logLevel 1
 uciLoad logFacility authpriv.notice
-uciLoad persistentStateWritePeriod 1d
+uciLoad persistentStateWritePeriod -1
 uciLoad fileStateTempPrefix /tmp/bearDropper
 uciLoad fileStatePersistPrefix /etc/bearDropper
 uciLoad firewallHookChain input_wan_rule
@@ -235,8 +235,8 @@ saveState () {
     bddbSave "$fileStateTempPrefix" "$fileStateType"
     logLine 3 "saveState() now=`date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
   fi    
-  if [ $persistentStateWritePeriod -gt 0 ] || [ $persistentStateWritePeriod = 0 -a $forcePersistent = 1 ] ; then
-    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent = 1 ] ; then
+  if [ $persistentStateWritePeriod -gt 1 ] || [ $persistentStateWritePeriod -eq 0 -a $forcePersistent -eq 1 ] ; then
+    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent -eq 1 ] ; then
       if [ ! -f "$fileStatePersist" ] || ! cmp -s "$fileStateTemp" "$fileStatePersist" ; then
         logLine 2 "saveState() writing to persistent state file"
         bddbSave "$fileStatePersistPrefix" "$fileStateType"
