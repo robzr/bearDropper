@@ -3,77 +3,68 @@
 # bearDropper - dropbear log parsing ban agent for OpenWRT (Chaos Calmer rewrite of dropBrute.sh)
 #   http://github.com/robzr/bearDropper  -- Rob Zwissler 11/2015
 # 
-#   - lightweight, no dependencies outside of default Chaos Calmer installation
-#   - Optionally uses uci for configuration, overrideable via command line arguments
-#   - Can run continuously in background (ie: via included init script) or periodically (via cron)
-#   - Can use BIND style time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
-#   - Whitelist IP or CIDR entries in UCI or state file
-#   - By default uses tmpfs for state file; can optionally write to persistent storage - routines are
-#     optimized to avoid excessive writes on flash storage
-#   - Runs in one of the following operational modes for flexibility:
-#     follow mode - follows the log file to process entries as they happen; generally launched via init
-#        script.  Responds the fastest, runs the most efficiently, but is always in memory.
-#     interval mode - only processes entries going back the specified interval; requires more processing
-#        than today mode, but responds more accurately.  Generally run periodically via cron.
-#     today mode - looks at log entries from the day it is being run, simple and lightweight, generally
-#        run from cron periodically (same simplistic behavior as dropBrute.sh)
-#     entire mode - runs through entire contents of the syslog ring buffer
+#   - lightweight, no dependencies, busybox ash + native OpenWRT commands
+#   - uses uci for configuration, overrideable via command line arguments
+#   - runs continuously in background (via init script) or periodically (via cron)
+#   - uses BIND time shorthand, ex: 1w5d3h1m8s is 1 week, 5 days, 3 hours, 1 minute, 8 seconds
+#   - Whitelist IP or CIDR entries (TBD) in uci config file
+#   - Records state file to tmpfs and intelligently syncs to persistent storage (can disable)
+#   - Persistent sync routines are optimized to avoid excessive writes (persistentStateWritePeriod)
+#   - Every run occurs in one of the following modes. If not specified, interval mode (24 hours) is 
+#     the default when not specified (the init script specifies follow mode via command line)
+# 
+#     "follow" mode follows syslog to process entries as they happen; generally launched via init
+#        script. Responds the fastest, runs the most efficiently, but is always in memory.
+#     "interval" mode only processes entries going back the specified interval; requires 
+#       more processing than today mode, but responds more accurately. Use with cron.
+#     "today" mode looks at log entries from the day it is being run, simple and lightweight, 
+#       generally run from cron periodically (same simplistic behavior as dropBrute.sh)
+#     "entire" mode runs through entire contents of the syslog ring buffer
+#     "wipe" mode tears down the firewall rules and removes the state files
 
-# Loads config variables from uci
-# Args: $1 = variable_name (also used for uci option name), $2 = default_value
+# Load UCI config variable, or use default if not set
+# Args: $1 = variable name (also uci option name), $2 = default_value
 uciLoad () {
   local getUci uciSection='bearDropper.@[0]'
   getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
   eval $1=\'$getUci\'
 }
 
-# Common config variables - these can also be changed at runtime with command line options
+# Common config variables - edit these in /etc/config/bearDropper
+# or they can be overridden at runtime with command line options
 #
+uciLoad defaultMode 24h
+uciLoad attemptCount 10
+uciLoad attemptPeriod 12h
+uciLoad banLength 1w
+uciLoad logLevel 1
+uciLoad logFacility authpriv.notice
+uciLoad persistentStateWritePeriod 1d
+uciLoad fileStateTempPrefix /tmp/bearDropper
+uciLoad fileStatePersistPrefix /etc/bearDropper
+uciLoad firewallHookChain input_wan_rule
+uciLoad firewallHookPosition 1
 
-uciLoad defaultMode 24h			# Mode used if no mode is specified on command line - modes are
-					# follow, today, entire or enter a time string for interval mode.
- 					# Time strings would be something like 1h30m for 1 hour 30 minutes,
-					# valid types are (w)eek (d)ay (h)our (m)inutes (s)econds.
-
-uciLoad attemptCount 5			# Failure attempts from a given IP required to trigger a ban
-
-uciLoad attemptPeriod 1d		# Time period threshold during which attemptCount must be exceeded in order to 
-					# trigger a ban.
-
-uciLoad banLength 1w			# How long a ban exist once the attempt threshold is exceeded
-
-uciLoad logLevel 1			# bearDropper log level, 0=silent 1=default, 2=verbose, 3=debug
-
-uciLoad logFacility 'authpriv.notice'	# bearDropper logger facility/priority - use stdout or stderr to bypass syslog
-
-uciLoad persistentStateWritePeriod 1d	# How often to write to persistent state file. -1 is never, 0 is on program
-					# exit, and a time string can be used to specify minimum intervals between writes
-                                        # for periodic saving in follow mode.  Consider the life of flash storage when 
-                                        # setting this.
-
-uciLoad fileStateTempPrefix "/tmp/bearDropper"	# Temporary state file prefix
-
-uciLoad fileStatePersistPrefix "/etc/bearDropper" # Persistent state file prefix, consider relocating off built in flash
-
-uciLoad firewallHookChain 'input_wan_rule' 	# firewall chain to hook the chain containing ban rules into
-
-uciLoad firewallHookPosition 1 		# position in firewall hook chain (-1 = don't add, 0 = append, 1+ = absolute position)
-
-uciLoad firewallChain 'bearDropper'	# the firewall chain bearDropper stores firewall commands in
-
+# Not commonly changed, but changeable via uci or cmdline (primarily 
+# to enable multiple parallel runs with different parameters)
+#
+uciLoad firewallChain 'bearDropper'
 uciLoad firewallTarget 'DROP'
 
-# Advanced variables below - changeable via uci only (no cmdline), it is unlikely that these will need to be changed, but just in case...
+# Advanced variables, changeable via uci only (no cmdline), it is 
+# unlikely that these will need to be changed, but just in case...
 #
-
-uciLoad fileStateType 'bddbz'						# bddb (plaintext) bddbz (compressed)
-uciLoad followModePurgeInterval 10m					# how often to attempt to purge expired bans when in follow mode
+uciLoad fileStateType 'bddbz'  # bddb (plaintext) or bddbz (compressed)
 uciLoad syslogTag "bearDropper[$$]"
-uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['	# only lines matching regexLogString are processed
-uciLoad regexLogStringInverse 'has invalid shell, rejected$' 		# but first lines matching regexLogStringInverse are filtered out
-uciLoad cmdLogread 'logread'						# parameters can be added for tuning, ex: "logread -l250"
-uciLoad formatLogDate '%b %e %H:%M:%S %Y'				# used to slurp syslog dates
-uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'			# used for today mode filtering
+uciLoad followModePurgeInterval 10m	# how often to attempt to expire
+					# bans when in follow mode
+# only lines matching regexLogString are processed
+uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
+# but first lines matching regexLogStringInverse are filtered out
+uciLoad regexLogStringInverse 'has invalid shell, rejected$'
+uciLoad cmdLogread 'logread'		# for tuning, ex: "logread -l250"
+uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# used to convert syslog dates
+uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
 
 # Begin functions
 #
@@ -81,39 +72,32 @@ uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'			# used for today mode 
 
 isValidBindTime () { echo "$1" | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
 
-# expands Bind time syntax into seconds (ex: 3w6d23h59m59s)
+# expands Bind time syntax into seconds (ex: 3w6d23h59m59s), Arg: $1=time string
 expandBindTime () {
-  if echo "$1" | egrep -q '^[0-9]+$' ; then
-    echo $1
-    return 0
-  elif ! echo "$1" | egrep -iq '^([0-9]+[wdhms]?)+$' ; then
-    logLine 0 "Error: Invalid time specified ($1)" >&2
-    exit 254
-  fi
-  local newTime=`echo $1 | sed 's/\b\([0-9]*\)w/\1*7d+/g' | sed 's/\b\([0-9]*\)d[ +]*/\1*24h+/g' | \
-    sed 's/\b\([0-9]*\)h[ +]*/\1*60m+/g' | sed 's/\b\([0-9]*\)m[ +]*/\1*60s+/g' | sed 's/s//g' | sed 's/+$//'`
-  echo $(($newTime))
+  isValidBindTime "$1" || { logLine 0 "Error: Invalid time specified ($1)" >&2 ; exit 254 ; }
+  echo $((`echo "$1" | sed -e 's/w+*/*7d+/g' -e 's/d+*/*24h+/g' -e 's/h+*/*60m+/g' -e 's/m+*/*60+/g' \
+    -e s/s//g -e s/+\$//`))
 }
 
 # Args: $1 = loglevel, $2 = info to log
 logLine () {
   [ $1 -gt $logLevel ] && return
   shift
-  
   if [ "$logFacility" = "stdout" ] ; then echo "$@"
   elif [ "$logFacility" = "stderr" ] ; then echo "$@" >&2
   else logger -t "$syslogTag" -p "$logFacility" "$@"
   fi
 }
 
-# extra validation - fails safe.  Args: $1=log line
+# extra validation, fails safe. Args: $1=log line
 getLogTime () {
-  local logDateString=`echo "$1" | sed -n 's/^[A-Z][a-z]* \([A-Z][a-z]*  *[0-9][0-9]*  *[0-9][0-9]*:[0-9][0-9]:[0-9][0-9] [0-9][0-9]*\) .*$/\1/p'`
-  date -d"$logDateString" -D"$formatLogDate" +%s || logLine 1 "Error: logDateString($logDateString) malformed line ($1)"
-#  echo TESTING:::date -d"$logDateString" -D"$formatLogDate" +%s:::
+  local logDateString=`echo "$1" | sed -n \
+    's/^[A-Z][a-z]* \([A-Z][a-z]*  *[0-9][0-9]*  *[0-9][0-9]*:[0-9][0-9]:[0-9][0-9] [0-9][0-9]*\) .*$/\1/p'`
+  date -d"$logDateString" -D"$formatLogDate" +%s || logLine 1 \
+    "Error: logDateString($logDateString) malformed line ($1)"
 }
 
-# extra validation - fails safe.  Args: $1=log line
+# extra validation, fails safe. Args: $1=log line
 getLogIP () { echo "$1" | sed -n 's/^.*from \([0-9.]*\):[0-9]*$/\1/p' ; }
 
 # Args: $1=IP
@@ -129,12 +113,10 @@ unBanIP () {
 # Args: $1=IP
 banIP () {
   local ip="$1"
-
   if ! iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
     logLine 1 "Creating iptables chain $firewallChain"
     iptables -N $firewallChain
   fi
-
   if [ $firewallHookPosition -ge 0 ] ; then
     if ! iptables -C $firewallHookChain -j $firewallChain 2>/dev/null ; then
       logLine 1 "Inserting hook into iptables chain $firewallHookChain"
@@ -143,7 +125,6 @@ banIP () {
       else
         iptables -I $firewallHookChain $firewallHookPosition -j $firewallChain
   fi ; fi ; fi
-   
   if ! iptables -C $firewallChain -s $ip -j "$firewallTarget" 2>/dev/null ; then
     logLine 1 "Inserting ban rule for IP $ip into iptables chain $firewallChain"
     iptables -A $firewallChain -s $ip -j "$firewallTarget"
@@ -165,7 +146,11 @@ wipeFirewall () {
   fi
 }
 
-# expunge expired records
+# review state file for expired records - we could add the bantime to
+# the rule via --comment but I can't think of a reason why that would
+# be necessary unless there is a bug in the expiration logic. The
+# state db should be more resiliant than the firewall in practice.
+#
 bddbPurgeExpires () {
   local now=`date +%s`
   bddbGetAllIPs | while read ip ; do
@@ -194,9 +179,9 @@ bddbEvaluateRecord () {
   local timeCount=`echo $times | wc -w`
   local didBan=0
   
-  # condition 0 - not enough attempts; do nothing
-  # condition 1 - attempts exceed threshold in time period; ban
-  # condition 2 - attempts exceed threshold but time period is too long; trim oldest time, recalculate
+  # 1: not enough attempts => do nothing and exit
+  # 2: attempts exceed threshold in time period => ban
+  # 3: attempts exceed threshold but time period is too long => trim oldest time, recalculate
   while [ $timeCount -ge $attemptCount ] ; do
     firstTime=`echo $times | cut -d\  -f1`
     lastTime=`echo $times | cut -d\  -f$timeCount`
@@ -208,7 +193,6 @@ bddbEvaluateRecord () {
       banIP $ip
       didBan=1
     fi
-    # slice one off the front, see what happens now.
     times=`echo $times | cut -d\  -f2-`
     timeCount=`echo $times | wc -w`
   done  
@@ -219,16 +203,13 @@ bddbEvaluateRecord () {
 processLogLine () {
   local time=`getLogTime "$1"` 
   local ip=`getLogIP "$1"` 
-  local timeNow=`date +%s`
-  local timeFirst=$((timeNow - attemptPeriod))
+#  local timeNow=`date +%s`
   local status="`bddbGetStatus $ip`"
-  local oldTime
 
   if [ "$status" = -1 ] ; then
     logLine 2 "processLogLine($ip,$time) IP is whitelisted"
   elif [ "$status" = 1 ] ; then
-    oldTime=`bddbGetTimes $ip`
-    if [ $oldTime -ge $time ] ; then
+    if [ "`bddbGetTimes $ip`" -ge $time ] ; then
       logLine 2 "processLogLine($ip,$time) already banned, ban timestamp already equal or newer"
     else
       logLine 2 "processLogLine($ip,$time) already banned, updating ban timestamp"
@@ -244,12 +225,6 @@ processLogLine () {
   fi
 }
 
-loadState () {
-  bddbLoad "$fileStatePersistPrefix" "$fileStateType"
-  bddbLoad "$fileStateTempPrefix" "$fileStateType"
-}
-
-# we need to add intelligent differnetal between temp & perm
 # Args, $1=-f to force a persistent write (unless lastPersistentStateWrite=-1)
 saveState () {
   local forcePersistent=0
@@ -267,6 +242,11 @@ saveState () {
         bddbSave "$fileStatePersistPrefix" "$fileStateType"
         lastPersistentStateWrite="`date +%s`"
   fi ; fi ; fi
+}
+
+loadState () {
+  bddbLoad "$fileStatePersistPrefix" "$fileStateType"
+  bddbLoad "$fileStateTempPrefix" "$fileStateType"
 }
 
 printUsage () {
@@ -305,32 +285,19 @@ printUsage () {
 unset logMode
 while getopts a:b:c:C:f:F:hj:l:m:p:P:s:t: arg ; do
   case "$arg" in 
-    a) attemptCount=$OPTARG
-      ;;
-    b) banLength=$OPTARG
-      ;;
-    c) firewallChain=$OPTARG
-      ;;
-    C) firewallHookChain=$OPTARG
-      ;;
-    f) logFacility=$OPTARG
-      ;;
-    F) firewallHookPosition=$OPTARG
-      ;;
-    j) firewallTarget=$OPTARG
-      ;;
-    l) logLevel=$OPTARG
-      ;;
-    m) logMode=$OPTARG
-      ;;
-    p) attemptPeriod=$OPTARG
-      ;;
-    P) persistentStateWritePeriod=$OPTARG
-      ;;
-    s) fileStatePersistPrefix=$OPTARG
-      ;;
-    s) fileStatePersistPrefix=$OPTARG
-      ;;
+    a) attemptCount=$OPTARG ;;
+    b) banLength=$OPTARG ;;
+    c) firewallChain=$OPTARG ;;
+    C) firewallHookChain=$OPTARG ;;
+    f) logFacility=$OPTARG ;;
+    F) firewallHookPosition=$OPTARG ;;
+    j) firewallTarget=$OPTARG ;;
+    l) logLevel=$OPTARG ;;
+    m) logMode=$OPTARG ;;
+    p) attemptPeriod=$OPTARG ;;
+    P) persistentStateWritePeriod=$OPTARG ;;
+    s) fileStatePersistPrefix=$OPTARG ;;
+    s) fileStatePersistPrefix=$OPTARG ;;
     *) printUsage
       exit 254
   esac
@@ -340,42 +307,45 @@ done
 
 fileStateTemp="$fileStateTempPrefix.$fileStateType"
 fileStatePersist="$fileStatePersistPrefix.$fileStateType"
+
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
 followModePurgeInterval=`expandBindTime $followModePurgeInterval`
 
-timeNow=`date +%s`
-timeFirst=$((timeNow - attemptPeriod))
-lastPersistentStateWrite=$timeNow
+lastPersistentStateWrite="`date +%s`"
 
 loadState
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 2 "Running in follow mode..."
-  local readsSinceSave=0
+  local readsSinceSave=0 lastPurge=0
+  tmpFile="`mktemp`"
   trap "saveState -f" SIGHUP
-  trap "saveState -f ; exit " SIGINT
-#  $cmdLogread -f | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while true ; do
-  $cmdLogread -f | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while true ; do
-    if read -t $followModePurgeInterval line ; then
-      processLogLine "$line"
-      if [ $((++readsSinceSave)) -ge $((persistentStateWritePeriod / followModePurgeInterval)) ] ; then
+  trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
+  $cmdLogread -f | while read -t $followModePurgeInterval line || true ; do
+    sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" > "$tmpFile" <<-_EOF_
+	$line
+	_EOF_
+    line="`cat $tmpFile`"
+    [ -n "$line" ] && processLogLine "$line"
+    logLine 3 "ReadComp:$readsSinceSave/$((persistentStateWritePeriod / followModePurgeInterval))"
+    if [ $((++readsSinceSave)) -ge $((persistentStateWritePeriod / followModePurgeInterval)) ] ; then
+      local now="`date +%s`"
+      logLine 3 "lp:$lastPurge purgeDiff=$((now - lastPurge)) vs $persistentStateWritePeriod"
+      if [ $((now - lastPurge)) -ge $persistentStateWritePeriod ] ; then
         bddbPurgeExpires
-        saveState
-        readsSinceSave=0
+        lastPurge="$now"
       fi
-    else
-      bddbPurgeExpires
       saveState
       readsSinceSave=0
     fi
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 2 "Running in entire mode..."
-#  $cmdLogread | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
-  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
+  $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
+    while read line ; do 
     processLogLine "$line" 
     saveState
   done
@@ -384,9 +354,9 @@ elif [ "$logMode" = entire ] ; then
   saveState -f
 elif [ "$logMode" = today ] ; then 
   logLine 2 "Running in today mode..."
-#  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
-  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
-    while read line ; do 
+  # merge the egrep into the sed command 
+  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$"'\'']//g' -e \
+    "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
       processLogLine "$line" 
       saveState
     done
@@ -396,9 +366,9 @@ elif [ "$logMode" = today ] ; then
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
-  timeStart=$((timeNow - logInterval))
-#  $cmdLogread | sed -n -e 's/[`$"\']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do
-  $cmdLogread | sed -n -e 's/[`$]//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do
+  timeStart=$((`date +%s` - logInterval))
+  $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
+    while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLogLine "$line"
     saveState
