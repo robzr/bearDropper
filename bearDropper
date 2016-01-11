@@ -413,7 +413,7 @@ loadState
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
-  logLine 2 "Running in follow mode..."
+  logLine 1 "Running in follow mode..."
   local readsSinceSave=0 lastPurge=0
   tmpFile="`mktemp`"
   trap "saveState -f" SIGHUP
@@ -438,7 +438,7 @@ if [ "$logMode" = follow ] ; then
     fi
   done
 elif [ "$logMode" = entire ] ; then 
-  logLine 2 "Running in entire mode..."
+  logLine 1 "Running in entire mode..."
   $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
     while read line ; do 
     processLogLine "$line" 
@@ -448,7 +448,7 @@ elif [ "$logMode" = entire ] ; then
   bddbPurgeExpires
   saveState -f
 elif [ "$logMode" = today ] ; then 
-  logLine 2 "Running in today mode..."
+  logLine 1 "Running in today mode..."
   # merge the egrep into the sed command 
   $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$"'\'']//g' -e \
     "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
@@ -460,7 +460,7 @@ elif [ "$logMode" = today ] ; then
   saveState -f
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
-  logLine 2 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
+  logLine 1 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((`date +%s` - logInterval))
   $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
     while read line ; do
