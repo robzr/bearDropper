@@ -310,7 +310,7 @@ fileStatePersist="$fileStatePersistPrefix.$fileStateType"
 
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
-persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
+[ $persistentStateWritePeriod != -1 ] && persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
 followModePurgeInterval=`expandBindTime $followModePurgeInterval`
 
 lastPersistentStateWrite="`date +%s`"
@@ -324,17 +324,19 @@ if [ "$logMode" = follow ] ; then
   tmpFile="`mktemp`"
   trap "saveState -f" SIGHUP
   trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
+  worstCaseReads=1
+  [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModePurgeInterval))
   $cmdLogread -f | while read -t $followModePurgeInterval line || true ; do
     sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" > "$tmpFile" <<-_EOF_
 	$line
 	_EOF_
     line="`cat $tmpFile`"
     [ -n "$line" ] && processLogLine "$line"
-    logLine 3 "ReadComp:$readsSinceSave/$((persistentStateWritePeriod / followModePurgeInterval))"
-    if [ $((++readsSinceSave)) -ge $((persistentStateWritePeriod / followModePurgeInterval)) ] ; then
+    logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads
+    if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       local now="`date +%s`"
       logLine 3 "lp:$lastPurge purgeDiff=$((now - lastPurge)) vs $persistentStateWritePeriod"
-      if [ $((now - lastPurge)) -ge $persistentStateWritePeriod ] ; then
+      if [ $((now - lastPurge)) -ge $followModePurgeInterval ] ; then
         bddbPurgeExpires
         lastPurge="$now"
       fi
