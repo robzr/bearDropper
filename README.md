@@ -4,8 +4,13 @@
 
 OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connection attempts (embedded fail2ban)
 
+**Status**
+
+Probably has some bugs, still a work in progress, but I'm using it.
+
 **Dependencies** 
-  - no external dependencies - written entirely in busybox ash
+
+None! Written entirely in busybox ash, uses only stock Chaos Calmer commands.
 
 **Installation**
 
@@ -38,7 +43,7 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
  - lots of input validation for paranoid prevention of injection attacks
 
 **TBD**
- - fix init script
+ - fix init script - signal handling to quit properly?
  - make whitelisting functional
  - package!
  - native CIDR processing for better whitelisting/banning (/24 based bans?)
