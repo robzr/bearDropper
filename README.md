@@ -9,7 +9,8 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
 
 **Installation**
 
-	opkg install http://........
+Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init script in /etc/init.d
+
 	/etc/init.d/bearDropper enable
 	/etc/init.d/bearDropper start
 
@@ -37,13 +38,12 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
  - lots of input validation for paranoid prevention of injection attacks
 
 **TBD**
+ - fix init script
  - make whitelisting functional
- - procd init script
- - opkg, incorporate to makefile
+ - package!
  - native CIDR processing for better whitelisting/banning (/24 based bans?)
  - possibly add (optional) ipset support instead of chain based ?
- - support for a file based syslog
- - more pipeline optimization to reduce running memory
+ - support for a file based syslog (would anyone use this)
  - ipv6
 
 Also see the sister project sub2rbl for RBL based banning: https://github.com/robzr/sub2rbl
