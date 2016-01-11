@@ -332,16 +332,15 @@ if [ "$logMode" = follow ] ; then
 	_EOF_
     line="`cat $tmpFile`"
     [ -n "$line" ] && processLogLine "$line"
-    logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads
+    logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       local now="`date +%s`"
-      logLine 3 "lp:$lastPurge purgeDiff=$((now - lastPurge)) vs $persistentStateWritePeriod"
       if [ $((now - lastPurge)) -ge $followModePurgeInterval ] ; then
         bddbPurgeExpires
+        saveState
+        readsSinceSave=0
         lastPurge="$now"
       fi
-      saveState
-      readsSinceSave=0
     fi
   done
 elif [ "$logMode" = entire ] ; then 
