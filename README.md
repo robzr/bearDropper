@@ -1,7 +1,6 @@
 ## bearDropper 
 
-**dropbear log parsing ban agent for OpenWRT (Chaos Calmer rewrite of dropBrute.sh)**
-  --Rob Zwissler @robzr
+**dropbear log parsing ban agent for OpenWRT (Chaos Calmer rewrite of dropBrute.sh)** - @robzr
 
 OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connection attempts (embedded fail2ban)
 
