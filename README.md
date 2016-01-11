@@ -34,7 +34,7 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
  - state database file(s) are compressed by default (easily disabled with config option)
  - runs using sane defaults out of the box, uses uci for config, overwriteable via command line arguments
  - supports whitelisting of IP addresses or CIDR blocks (TBD)
- - uses highly readable BIND9 time format for all time values
+ - uses highly readable BIND time syntax for all time values
  - default running mode follows the log in real-time (usually run via included init script)
  - 3 other available running modes that examine historical logs (to optimize for low memory or serial/batch style usage)
  - (optional) records state file to persistent storage with intelligent routines to avoid excessive flash writes
