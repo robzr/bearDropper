@@ -56,7 +56,7 @@ uciLoad firewallTarget 'DROP'
 #
 uciLoad fileStateType 'bddbz'  # bddb (plaintext) or bddbz (compressed)
 uciLoad syslogTag "bearDropper[$$]"
-uciLoad followModePurgeInterval 10m	# how often to attempt to expire
+uciLoad followModePurgeInterval 30m	# how often to attempt to expire
 					# bans when in follow mode
 # only lines matching regexLogString are processed
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
@@ -68,9 +68,6 @@ uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
 
 # Begin functions
 #
-
-bddbStateChange=0 
-
 # Clear bddb entries from environment
 bddbClear () { 
   local bddbVar
@@ -106,7 +103,6 @@ bddbSave () {
   fi
   bddbStateChange=0 
 }
-
 
 # Set bddb record status=1, update ban time flag with newest
 # Args: $1=IP Address $2=timeFlag
@@ -162,7 +158,6 @@ bddbGetRecord () {
   record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
   eval echo \$$record
 }
-
 
 isValidBindTime () { echo "$1" | egrep -q '^[0-9]+$|^([0-9]+[wdhms]?)+$' ; }
 
@@ -297,7 +292,6 @@ bddbEvaluateRecord () {
 processLogLine () {
   local time=`getLogTime "$1"` 
   local ip=`getLogIP "$1"` 
-#  local timeNow=`date +%s`
   local status="`bddbGetStatus $ip`"
 
   if [ "$status" = -1 ] ; then

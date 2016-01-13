@@ -21,9 +21,6 @@
 # TBD: finish CIDR support, add lookup/match routines
 #
 # _BEGIN_MEAT_
-
-bddbStateChange=0 
-
 # Clear bddb entries from environment
 bddbClear () { 
   local bddbVar
@@ -59,7 +56,6 @@ bddbSave () {
   fi
   bddbStateChange=0 
 }
-
 
 # Set bddb record status=1, update ban time flag with newest
 # Args: $1=IP Address $2=timeFlag
@@ -115,7 +111,6 @@ bddbGetRecord () {
   record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
   eval echo \$$record
 }
-
 # _END_MEAT_
 #
 # Test routines

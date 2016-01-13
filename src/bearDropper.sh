@@ -56,7 +56,7 @@ uciLoad firewallTarget 'DROP'
 #
 uciLoad fileStateType 'bddbz'  # bddb (plaintext) or bddbz (compressed)
 uciLoad syslogTag "bearDropper[$$]"
-uciLoad followModePurgeInterval 10m	# how often to attempt to expire
+uciLoad followModePurgeInterval 30m	# how often to attempt to expire
 					# bans when in follow mode
 # only lines matching regexLogString are processed
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
@@ -203,7 +203,6 @@ bddbEvaluateRecord () {
 processLogLine () {
   local time=`getLogTime "$1"` 
   local ip=`getLogIP "$1"` 
-#  local timeNow=`date +%s`
   local status="`bddbGetStatus $ip`"
 
   if [ "$status" = -1 ] ; then
