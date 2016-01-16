@@ -35,7 +35,7 @@ bddbCount () { set | egrep '^bddb_[0-9_]*=' | wc -l ; }
 bddbLoad () { 
   local loadFile="$1.$2" fileType="$2"
   bddbClear 
-  if [ "$fileType" = bddb ] ; then
+  if [ "$fileType" = bddb -a -f "$loadFile" ] ; then
     . "$loadFile"
   elif [ "$fileType" = bddbz -a -f "$loadFile" ] ; then
     local tmpFile="`mktemp`"

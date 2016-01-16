@@ -41,6 +41,9 @@ config bearDropper
   # position in firewall hook chain (-1 = don't add, 0 = append, 1+ = absolute position)
   #	option	firewallHookPosition 	1
 
+  # Used bddbz for compressed or bddb for plaintext state files
+  #	option	fileStateType		bddb	
+
   # Currently CIDR whitelist entries do not work (IPs do)
   # As a temporary workaround, just put a firewall rule in upstream
   #

@@ -44,6 +44,7 @@ uciLoad fileStateTempPrefix /tmp/bearDropper
 uciLoad fileStatePersistPrefix /etc/bearDropper
 uciLoad firewallHookChain input_wan_rule
 uciLoad firewallHookPosition 1
+uciLoad fileStateType 'bddb'
 
 # Not commonly changed, but changeable via uci or cmdline (primarily 
 # to enable multiple parallel runs with different parameters)
@@ -54,7 +55,6 @@ uciLoad firewallTarget 'DROP'
 # Advanced variables, changeable via uci only (no cmdline), it is 
 # unlikely that these will need to be changed, but just in case...
 #
-uciLoad fileStateType 'bddbz'  # bddb (plaintext) or bddbz (compressed)
 uciLoad syslogTag "bearDropper[$$]"
 uciLoad followModePurgeInterval 30m	# how often to attempt to expire
 					# bans when in follow mode
@@ -98,7 +98,7 @@ getLogTime () {
 }
 
 # extra validation, fails safe. Args: $1=log line
-getLogIP () { echo "$1" | sed -n 's/^.*from \([0-9.]*\):[0-9]*$/\1/p' ; }
+getLogIP () { echo "$1" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'; }
 
 # Args: $1=IP
 unBanIP () {
@@ -326,7 +326,7 @@ if [ "$logMode" = follow ] ; then
   worstCaseReads=1
   [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModePurgeInterval))
   $cmdLogread -f | while read -t $followModePurgeInterval line || true ; do
-    sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" > "$tmpFile" <<-_EOF_
+    sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' > "$tmpFile" <<-_EOF_
 	$line
 	_EOF_
     line="`cat $tmpFile`"
@@ -344,7 +344,7 @@ if [ "$logMode" = follow ] ; then
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 1 "Running in entire mode..."
-  $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
+  $cmdLogread | sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | \
     while read line ; do 
     processLogLine "$line" 
     saveState
@@ -355,8 +355,8 @@ elif [ "$logMode" = entire ] ; then
 elif [ "$logMode" = today ] ; then 
   logLine 1 "Running in today mode..."
   # merge the egrep into the sed command 
-  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -n -e 's/[`$"'\'']//g' -e \
-    "/$regexLogStringInverse/d" -e "/$regexLogString/p" | while read line ; do 
+  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nE -e 's/[`$"'\'']//g' -e \
+    '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | while read line ; do 
       processLogLine "$line" 
       saveState
     done
@@ -367,7 +367,7 @@ elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 1 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((`date +%s` - logInterval))
-  $cmdLogread | sed -n -e 's/[`$"'\'']//g' -e "/$regexLogStringInverse/d" -e "/$regexLogString/p" | \
+  $cmdLogread | sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | \
     while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLogLine "$line"
