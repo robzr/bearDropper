@@ -8,8 +8,8 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
 
 Works, known issues include:
 
-When killed in follow mode (ex: /etc/init/bearDropper stop), doesn't kill the innermost while loop
-Whitelisting is not implemented yet
+- When killed in follow mode (ex: /etc/init/bearDropper stop), doesn't kill the innermost while loop
+- Whitelisting is not implemented yet
 
 **Dependencies** 
 
