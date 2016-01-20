@@ -240,8 +240,9 @@ wipeFirewall () {
 # be necessary unless there is a bug in the expiration logic. The
 # state db should be more resiliant than the firewall in practice.
 #
-bddbPurgeExpires () {
+bddbCheckStatusAll () {
   local now=`date +%s`
+  logLine 3 "bddbCheckStatusAll not expired yet"
   bddbGetAllIPs | while read ip ; do
     if [ `bddbGetStatus $ip` = 1 ] ; then
       if [ $((banLength + `bddbGetTimes $ip`)) -lt $now ] ; then
@@ -249,7 +250,7 @@ bddbPurgeExpires () {
         unBanIP $ip
         bddbRemoveRecord $1 
       else 
-        logLine 2 "bddbPurgeExpires($ip) not expired yet"
+        banIP $ip
       fi
     elif [ `bddbGetStatus $ip` = 0 ] ; then
       local times=`bddbGetTimes $ip | tr , \ `
@@ -409,6 +410,7 @@ loadState
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode..."
   local readsSinceSave=0 lastPurge=0
+  bddbCheckStatusAll
   tmpFile="`mktemp`"
   trap "saveState -f" SIGHUP
   trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
@@ -424,7 +426,7 @@ if [ "$logMode" = follow ] ; then
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       local now="`date +%s`"
       if [ $((now - lastPurge)) -ge $followModePurgeInterval ] ; then
-        bddbPurgeExpires
+        bddbCheckStatusAll
         saveState
         readsSinceSave=0
         lastPurge="$now"
@@ -439,7 +441,7 @@ elif [ "$logMode" = entire ] ; then
     saveState
   done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = today ] ; then 
   logLine 1 "Running in today mode..."
@@ -450,7 +452,7 @@ elif [ "$logMode" = today ] ; then
       saveState
     done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
@@ -463,7 +465,7 @@ elif isValidBindTime "$logMode" ; then
     saveState
   done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = wipe ] ; then 
   logLine 2 "Wiping state files, unhooking and removing iptables chains"
