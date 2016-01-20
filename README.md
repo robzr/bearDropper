@@ -8,12 +8,12 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
 
 Works, known issues include:
 
-- When killed in follow mode (ex: /etc/init/bearDropper stop), doesn't kill the innermost while loop
-- Whitelisting is not implemented yet
+- When killed in follow mode (ex: /etc/init/bearDropper stop), the innermost while loop (ash child process) doesn't die
+- Whitelisting is not implemented
 
 **Dependencies** 
 
-None! Written entirely in busybox ash, uses only stock Chaos Calmer commands.
+None! Written entirely in busybox ash, uses all standard OpenWRT commands.
 
 **Installation**
 
@@ -24,31 +24,30 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
 
   - To modify the config options, edit the uci config file (/etc/config/bearDropper)
   - Use bearDropper -h to see options for runtime config (runtime options override uci config options)
-  - Consider increasing your syslog ring buffer size if you have memory to spare (/etc/config/system option log_size), particularily if not using follow mode
+  - Consider increasing your syslog ring buffer size (/etc/config/system option log_size)
 
 **Logging**
   - logs to the syslog ring buffer by default (view with the logread command)
-  - can log to stdout by changing the config option logFacility in the config file or by using the command line option -f (ex: -f stdout)
-  - Verbosity changed with the config option logLevel or by using -l (for increased verbosity use: -l 2)
+  - logs to stdout with "-f stdout" (or logFacility config option)
+  - increaser verbosity with "-l 2" (or logLevel config option)
 
 **Features**
- - lightweight, small size, uses only out of the box OpenWRT commands
- - uses a self managed state database, from which iptables is periodically sync'd (for resiliency)
- - state database file(s) are compressed by default (easily disabled with config option)
+ - small size, low memory footprint, no external dependencies
  - runs using sane defaults out of the box, uses uci for config, overwriteable via command line arguments
- - supports whitelisting of IP addresses or CIDR blocks (TBD)
- - uses highly readable BIND time syntax for all time values
- - default running mode follows the log in real-time (usually run via included init script)
- - 3 other available running modes that examine historical logs (to optimize for low memory or serial/batch style usage)
- - (optional) records state file to persistent storage with intelligent routines to avoid excessive flash writes
- - self installs hook into iptables for simple and reliable setup (easily disabled)
- - stripping all comments shrinks to 62% file space, gzip shrinks to 18% (if 20k is too big for ya)
- - lots of input validation for paranoid prevention of injection attacks
+ - uses a self managed state database, from which iptables is periodically sync'd (for resiliency)
+ - optionally syncs state database to persistent storage - includes logic to avoid excessive flash writes
+ - state database optionally supports compression (see config file)
+ - uses highly readable BIND time syntax for all time values (ex: 9d2h3s is 9 days, 2 hours, 3 seconds)
+ - when run via included init script, runs in the background for realtime monitoring
+ - can also be run by hand to process historical log entries
+ - self installs into iptables for simple and reliable setup (easily disabled)
+ - conservative input validation for security
 
 **TBD**
- - native CIDR processing for better whitelisting/banning (/24 based bans?)
+ - implement whitelist
+ - CIDR processing for bans & whitelists
+ - self expiring ipset based ban list
  - package and submit to openwrt repo once it's reasonably bug free
- - ipv6
+ - ipv6 support
 
 Also see the sister project sub2rbl for RBL based banning: https://github.com/robzr/sub2rbl
-
