@@ -33,7 +33,7 @@ uciLoad () {
 # Common config variables - edit these in /etc/config/bearDropper
 # or they can be overridden at runtime with command line options
 #
-uciLoad defaultMode 24h
+uciLoad defaultMode entire
 uciLoad attemptCount 10
 uciLoad attemptPeriod 12h
 uciLoad banLength 1w
@@ -337,6 +337,7 @@ saveState () {
 loadState () {
   bddbLoad "$fileStatePersistPrefix" "$fileStateType"
   bddbLoad "$fileStateTempPrefix" "$fileStateType"
+  logLine 2 "loadState() loaded `bddbCount` entries"
 }
 
 printUsage () {
@@ -406,12 +407,12 @@ followModeCheckInterval=`expandBindTime $followModeCheckInterval`
 lastPersistentStateWrite="`date +%s`"
 
 loadState
+bddbCheckStatusAll
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode..."
   local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="`mktemp`"
-  bddbCheckStatusAll
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
 #  trap "saveState -f" SIGHUP
 #  trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
