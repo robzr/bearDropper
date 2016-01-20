@@ -6,10 +6,7 @@ OpenWRT (Chaos Calmer) script for blocking repeated invalid dropbear ssh connect
 
 **Status**
 
-Works, known issues include:
-
-- When killed in follow mode (ex: /etc/init/bearDropper stop), the innermost while loop (ash child process) doesn't die
-- Whitelisting is not implemented
+Working, no known issues.
 
 **Dependencies** 
 
@@ -27,11 +24,13 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
   - Consider increasing your syslog ring buffer size (/etc/config/system option log_size)
 
 **Logging**
+
   - logs to the syslog ring buffer by default (view with the logread command)
   - logs to stdout with "-f stdout" (or logFacility config option)
   - increaser verbosity with "-l 2" (or logLevel config option)
 
 **Features**
+
  - small size, low memory footprint, no external dependencies
  - runs using sane defaults out of the box, uses uci for config, overwriteable via command line arguments
  - uses a self managed state database, from which iptables is periodically sync'd (for resiliency)
@@ -44,6 +43,7 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
  - conservative input validation for security
 
 **TBD**
+
  - implement whitelist
  - CIDR processing for bans & whitelists
  - self expiring ipset based ban list
