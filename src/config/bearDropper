@@ -6,46 +6,45 @@ config bearDropper
   # follow, today, entire or enter a time string for interval mode.
   # Time strings would be something like 1h30m for 1 hour 30 minutes,
   # valid types are (w)eek (d)ay (h)our (m)inutes (s)econds.
-  #	option	defaultMode 		24h
+  	option	defaultMode 		24h
 
   # Failure attempts from a given IP required to trigger a ban
-  #	option	attemptCount 		10
+  	option	attemptCount 		10
 
   # Time period threshold during which attemptCount must be exceeded in order to trigger a ban.
-  #	option	attemptPeriod 		12h
+  	option	attemptPeriod 		12h
 
   # How long a ban exist once the attempt threshold is exceeded
-  #	option 	banLength 		1w
+  	option 	banLength 		1w
 
   # bearDropper log level, 0=silent 1=default 2=verbose 3=debug
-  #	option 	logLevel 		2
+  	option 	logLevel 		1
 
   # bearDropper logger facility/priority - use stdout or stderr to bypass syslog
-  #	option	logFacility 		authpriv.notice
+  	option	logFacility 		authpriv.notice
 
   # How often to write to persistent state file. -1 is never, 0 is on program
   # exit, and a time string can be used to specify minimum intervals between writes
   # for periodic saving in follow mode.  Consider the life of flash storage when
-  # setting this.
+  # setting this.  Disabled by default.
   #	option	persistentStateWritePeriod	1d
 
-  # Temporary state file prefix (.bddb or .bddbz will be appended)
-  #	option	fileStateTempPrefix 	/tmp/bearDropper
+  # Used bddbz for compressed or bddb for plaintext state files
+  	option	fileStateType		bddb	
+
+  # Temporary state file prefix (.$fileStateType (.bddb or .bddbz) will be appended)
+  	option	fileStateTempPrefix 	/tmp/bearDropper
 
   # Persistent state file prefix (consider relocating off onboard flash)
-  #	option	fileStatePersistPrefix 	/etc/bearDropper
+  	option	fileStatePersistPrefix 	/etc/bearDropper
 
   # firewall chain to hook the chain containing ban rules into
-  #	option	firewallHookChain 	input_wan_rule
+  	option	firewallHookChain 	input_wan_rule
 
   # position in firewall hook chain (-1 = don't add, 0 = append, 1+ = absolute position)
-  #	option	firewallHookPosition 	1
+  	option	firewallHookPosition 	1
 
-  # Used bddbz for compressed or bddb for plaintext state files
-  #	option	fileStateType		bddb	
-
-  # Currently CIDR whitelist entries do not work (IPs do)
-  # As a temporary workaround, just put a firewall rule in upstream
+  # Whitelist entries do not work yet; as a temporary workaround, put in a firewall rule upstream
   #
   #	list	whitelist		10.0.1.7
   #	list	whitelist		10.0.1.0/24

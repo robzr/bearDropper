@@ -90,7 +90,7 @@ bddbAddRecord () {
 # Args: $1 = IP address
 bddbRemoveRecord () {
   local ip="`echo "$1" | tr . _`"
-  eval "unset bddb_$ip"
+  eval unset bddb_$ip
   bddbStateChange=1
 }
 

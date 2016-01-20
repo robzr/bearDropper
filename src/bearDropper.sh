@@ -40,11 +40,11 @@ uciLoad banLength 1w
 uciLoad logLevel 1
 uciLoad logFacility authpriv.notice
 uciLoad persistentStateWritePeriod -1
+uciLoad fileStateType bddb
 uciLoad fileStateTempPrefix /tmp/bearDropper
 uciLoad fileStatePersistPrefix /etc/bearDropper
 uciLoad firewallHookChain input_wan_rule
 uciLoad firewallHookPosition 1
-uciLoad fileStateType 'bddb'
 
 # Not commonly changed, but changeable via uci or cmdline (primarily 
 # to enable multiple parallel runs with different parameters)
@@ -56,7 +56,7 @@ uciLoad firewallTarget 'DROP'
 # unlikely that these will need to be changed, but just in case...
 #
 uciLoad syslogTag "bearDropper[$$]"
-uciLoad followModePurgeInterval 30m	# how often to attempt to expire
+uciLoad followModeCheckInterval 30m	# how often to attempt to expire
 					# bans when in follow mode
 # only lines matching regexLogString are processed
 uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
@@ -151,23 +151,25 @@ wipeFirewall () {
 # be necessary unless there is a bug in the expiration logic. The
 # state db should be more resiliant than the firewall in practice.
 #
-bddbPurgeExpires () {
+bddbCheckStatusAll () {
   local now=`date +%s`
   bddbGetAllIPs | while read ip ; do
-    if [ `bddbGetStatus $ip` = 1 ] ; then
+    if [ `bddbGetStatus $ip` -eq 1 ] ; then
+      logLine 3 "bddbCheckStatusAll($ip) testing banLength:$banLength + bddbGetTimes:`bddbGetTimes $ip` vs. now:$now"
       if [ $((banLength + `bddbGetTimes $ip`)) -lt $now ] ; then
         logLine 1 "Ban expired for $ip, removing from iptables"
         unBanIP $ip
-        bddbRemoveRecord $1 
+        bddbRemoveRecord $ip
       else 
-        logLine 2 "bddbPurgeExpires($ip) not expired yet"
+        logLine 3 "bddbCheckStatusAll($ip) not expired yet"
+        banIP $ip
       fi
-    elif [ `bddbGetStatus $ip` = 0 ] ; then
+    elif [ `bddbGetStatus $ip` -eq 0 ] ; then
       local times=`bddbGetTimes $ip | tr , \ `
       local timeCount=`echo $times | wc -w`
       local lastTime=`echo $times | cut -d\  -f$timeCount`
       if [ $((lastTime + attemptPeriod)) -lt $now ] ; then
-        bddbRemoveRecord $1 
+        bddbRemoveRecord $ip
     fi ; fi
   done
 }
@@ -310,7 +312,7 @@ fileStatePersist="$fileStatePersistPrefix.$fileStateType"
 attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 [ $persistentStateWritePeriod != -1 ] && persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
-followModePurgeInterval=`expandBindTime $followModePurgeInterval`
+followModeCheckInterval=`expandBindTime $followModeCheckInterval`
 
 lastPersistentStateWrite="`date +%s`"
 
@@ -319,13 +321,13 @@ loadState
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode..."
-  local readsSinceSave=0 lastPurge=0
-  tmpFile="`mktemp`"
-  trap "saveState -f" SIGHUP
-  trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
-  worstCaseReads=1
-  [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModePurgeInterval))
-  $cmdLogread -f | while read -t $followModePurgeInterval line || true ; do
+  local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="`mktemp`"
+  bddbCheckStatusAll
+# Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
+#  trap "saveState -f" SIGHUP
+#  trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
+  [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModeCheckInterval))
+  $cmdLogread -f | while read -t $followModeCheckInterval line || true ; do
     sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' > "$tmpFile" <<-_EOF_
 	$line
 	_EOF_
@@ -334,11 +336,11 @@ if [ "$logMode" = follow ] ; then
     logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       local now="`date +%s`"
-      if [ $((now - lastPurge)) -ge $followModePurgeInterval ] ; then
-        bddbPurgeExpires
+      if [ $((now - lastCheckAll)) -ge $followModeCheckInterval ] ; then
+        bddbCheckStatusAll
+        lastCheckAll="$now"
         saveState
         readsSinceSave=0
-        lastPurge="$now"
       fi
     fi
   done
@@ -350,7 +352,7 @@ elif [ "$logMode" = entire ] ; then
     saveState
   done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = today ] ; then 
   logLine 1 "Running in today mode..."
@@ -361,7 +363,7 @@ elif [ "$logMode" = today ] ; then
       saveState
     done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
@@ -374,7 +376,7 @@ elif isValidBindTime "$logMode" ; then
     saveState
   done
   loadState
-  bddbPurgeExpires
+  bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = wipe ] ; then 
   logLine 2 "Wiping state files, unhooking and removing iptables chains"
