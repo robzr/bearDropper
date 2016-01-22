@@ -45,12 +45,12 @@ uciLoad fileStateTempPrefix /tmp/bearDropper
 uciLoad fileStatePersistPrefix /etc/bearDropper
 uciLoad firewallHookChain input_wan_rule
 uciLoad firewallHookPosition 1
+uciLoad firewallTarget DROP
 
 # Not commonly changed, but changeable via uci or cmdline (primarily 
 # to enable multiple parallel runs with different parameters)
 #
-uciLoad firewallChain 'bearDropper'
-uciLoad firewallTarget 'DROP'
+uciLoad firewallChain bearDropper
 
 # Advanced variables, changeable via uci only (no cmdline), it is 
 # unlikely that these will need to be changed, but just in case...

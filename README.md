@@ -44,6 +44,8 @@ Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init s
 
 **TBD**
 
+ - Add optional freegeoip.net lookups for (de|ac)cellerated banning
+ - Add elegant auto-hook to forward chain (ex: forwarding_wan_rule)
  - implement whitelist
  - CIDR processing for bans & whitelists
  - self expiring ipset based ban list
