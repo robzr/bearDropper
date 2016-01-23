@@ -49,19 +49,14 @@ uciLoad firewallTarget DROP
 
 # Not commonly changed, but changeable via uci or cmdline (primarily 
 # to enable multiple parallel runs with different parameters)
-#
 uciLoad firewallChain bearDropper
 
 # Advanced variables, changeable via uci only (no cmdline), it is 
 # unlikely that these will need to be changed, but just in case...
 #
 uciLoad syslogTag "bearDropper[$$]"
-uciLoad followModeCheckInterval 30m	# how often to attempt to expire
-					# bans when in follow mode
-# only lines matching regexLogString are processed
-uciLoad regexLogString '^[a-zA-Z ]* [0-9: ]* authpriv.warn dropbear\['
-# but first lines matching regexLogStringInverse are filtered out
-uciLoad regexLogStringInverse 'has invalid shell, rejected$'
+# how often to attempt to expire bans when in follow mode
+uciLoad followModeCheckInterval 30m	
 uciLoad cmdLogread 'logread'		# for tuning, ex: "logread -l250"
 uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# used to convert syslog dates
 uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
@@ -314,22 +309,32 @@ attemptPeriod=`expandBindTime $attemptPeriod`
 banLength=`expandBindTime $banLength`
 [ $persistentStateWritePeriod != -1 ] && persistentStateWritePeriod=`expandBindTime $persistentStateWritePeriod`
 followModeCheckInterval=`expandBindTime $followModeCheckInterval`
+exitStatus=0
+
+# Here we convert the logRegex list into a sed -f file
+fileRegex="/tmp/bearDropper.$$.regex"
+uci get -d "
+" 'bearDropper.@[0].logRegex' | sed -e s/^\'// -e s/\'\$// > "$fileRegex"
 
 lastPersistentStateWrite="`date +%s`"
-
 loadState
 bddbCheckStatusAll
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode..."
-  local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="`mktemp`"
+  local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
-#  trap "saveState -f" SIGHUP
-#  trap "saveState -f ; rm -f "$tmpFile" ; exit " SIGINT
+  trap "rm -f "$tmpFile" "$fileRegex" ; exit " SIGINT
   [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModeCheckInterval))
+  local firstRun=1
   $cmdLogread -f | while read -t $followModeCheckInterval line || true ; do
-    sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' > "$tmpFile" <<-_EOF_
+    if [ $firstRun -eq 1 ] ; then
+      trap "saveState -f" SIGHUP
+      trap "saveState -f; exit" SIGINT
+      firstRun=0
+    fi
+    sed -nEf "$fileRegex" > "$tmpFile" <<-_EOF_
 	$line
 	_EOF_
     line="`cat $tmpFile`"
@@ -347,8 +352,7 @@ if [ "$logMode" = follow ] ; then
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 1 "Running in entire mode..."
-  $cmdLogread | sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | \
-    while read line ; do 
+  $cmdLogread | sed -nEf "$fileRegex" | while read line ; do 
     processLogLine "$line" 
     saveState
   done
@@ -357,9 +361,8 @@ elif [ "$logMode" = entire ] ; then
   saveState -f
 elif [ "$logMode" = today ] ; then 
   logLine 1 "Running in today mode..."
-  # merge the egrep into the sed command 
-  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nE -e 's/[`$"'\'']//g' -e \
-    '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | while read line ; do 
+  # merge the egrep into sed with -e /^$formatTodayLogDateRegex/!d
+  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nEf "$fileRegex" | while read line ; do 
       processLogLine "$line" 
       saveState
     done
@@ -370,8 +373,7 @@ elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 1 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
   timeStart=$((`date +%s` - logInterval))
-  $cmdLogread | sed -nE -e 's/[`$"'\'']//g' -e '\#'"$regexLogStringInverse"'#d' -e '\#'"$regexLogString"'#p' | \
-    while read line ; do
+  $cmdLogread | sed -nEf "$fileRegex" | while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLogLine "$line"
     saveState
@@ -392,5 +394,8 @@ elif [ "$logMode" = wipe ] ; then
   fi
 else
   logLine 0 "Error: invalid log mode ($logMode)"
-  exit 254
+  exitStatus=254
 fi
+
+rm -f "$fileRegex"
+exit $exitStatus

@@ -48,6 +48,13 @@ config bearDropper
   # target used for banned IPs - consider TARPIT/DELUDE
   	option	firewallTarget		DROP
 
+  # Log scanning regexs for those who want to extend the pattern matching. These are run in order
+  # by "sed -nE". The IP blocked by bearDropper is the first one encountered in the log line, so
+  # if the log line you are scanning for has multiple IPs, you can use a s///p regex to strip out
+  # earlier undesirable IPs.  Put /d (delete) entries before /p (print) entries.
+        list	logRegex 's/[`$"'\\\'']//g'			# strip escape chars
+        list	logRegex '/has invalid shell, rejected$/d'	# delete (/d) - use to filter out
+        list	logRegex '/ authpriv.warn dropbear\[/p'		# print (/p) - use to filter in 
 
   # whitelist entries do not work yet; as a temporary workaround, put in a firewall rule upstream
   #
