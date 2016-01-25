@@ -322,7 +322,7 @@ bddbCheckStatusAll
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
-  logLine 1 "Running in follow mode..."
+  logLine 1 "Running in follow mode
   local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
   trap "rm -f "$tmpFile" "$fileRegex" ; exit " SIGINT
@@ -351,7 +351,7 @@ if [ "$logMode" = follow ] ; then
     fi
   done
 elif [ "$logMode" = entire ] ; then 
-  logLine 1 "Running in entire mode..."
+  logLine 1 "Running in entire mode
   $cmdLogread | sed -nEf "$fileRegex" | while read line ; do 
     processLogLine "$line" 
     saveState
@@ -360,7 +360,7 @@ elif [ "$logMode" = entire ] ; then
   bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = today ] ; then 
-  logLine 1 "Running in today mode..."
+  logLine 1 "Running in today mode
   # merge the egrep into sed with -e /^$formatTodayLogDateRegex/!d
   $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nEf "$fileRegex" | while read line ; do 
       processLogLine "$line" 
