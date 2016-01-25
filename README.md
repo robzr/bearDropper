@@ -14,10 +14,9 @@ None! Written entirely in busybox ash, uses all standard OpenWRT commands.
 
 **Installation**
 
-Make bearDropper, place in /usr/sbin, config file goes in /etc/config and init script in /etc/init.d
+To install the latest bearDropper, run the following:
 
-	/etc/init.d/bearDropper enable
-	/etc/init.d/bearDropper start
+	wget -O- http://cdn.rawgit.com/robzr/bearDropper/master/install.sh | sh
 
   - To modify the config options, edit the uci config file (/etc/config/bearDropper)
   - Use bearDropper -h to see options for runtime config (runtime options override uci config options)
