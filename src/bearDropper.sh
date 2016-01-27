@@ -24,42 +24,54 @@
 
 # Load UCI config variable, or use default if not set
 # Args: $1 = variable name (also uci option name), $2 = default_value
-uciLoad () {
-  local getUci uciSection='bearDropper.@[0]'
-  getUci=`uci -q get ${uciSection}."$1"` || getUci="$2"
-  eval $1=\'$getUci\'
+uciSection='bearDropper.@[0]'
+uciLoadVar () { 
+  local getUci
+  getUci=`uci -q get ${uciSection}."$1"` || getUci="$2" 
+  eval $1=\'$getUci\'; 
+}
+uciLoad() {
+  local tFile=`mktemp` delim="
+"
+  [ "$1" = -d ] && { delim="$2"; shift 2; }
+  uci -q -d"$delim" get "$uciSection.$1" 2>/dev/null >$tFile
+  if [ $? = 0 ] ; then
+    sed -e s/^\'// -e s/\'$// <$tFile
+  else
+    while [ -n "$2" ]; do echo $2; shift; done
+  fi
+  rm -f $tFile
 }
 
 # Common config variables - edit these in /etc/config/bearDropper
 # or they can be overridden at runtime with command line options
 #
-uciLoad defaultMode entire
-uciLoad attemptCount 10
-uciLoad attemptPeriod 12h
-uciLoad banLength 1w
-uciLoad logLevel 1
-uciLoad logFacility authpriv.notice
-uciLoad persistentStateWritePeriod -1
-uciLoad fileStateType bddb
-uciLoad fileStateTempPrefix /tmp/bearDropper
-uciLoad fileStatePersistPrefix /etc/bearDropper
-uciLoad firewallHookChain input_wan_rule
-uciLoad firewallHookPosition 1
-uciLoad firewallTarget DROP
+uciLoadVar defaultMode entire
+uciLoadVar attemptCount 10
+uciLoadVar attemptPeriod 12h
+uciLoadVar banLength 1w
+uciLoadVar logLevel 1
+uciLoadVar logFacility authpriv.notice
+uciLoadVar persistentStateWritePeriod -1
+uciLoadVar fileStateType bddb
+uciLoadVar fileStateTempPrefix /tmp/bearDropper
+uciLoadVar fileStatePersistPrefix /etc/bearDropper
+firewallHookChains="`uciLoad -d \  firewallHookChain input_wan_rule:1 forwarding_wan_rule:1`"
+uciLoadVar firewallTarget DROP
 
 # Not commonly changed, but changeable via uci or cmdline (primarily 
 # to enable multiple parallel runs with different parameters)
-uciLoad firewallChain bearDropper
+uciLoadVar firewallChain bearDropper
 
 # Advanced variables, changeable via uci only (no cmdline), it is 
 # unlikely that these will need to be changed, but just in case...
 #
-uciLoad syslogTag "bearDropper[$$]"
+uciLoadVar syslogTag "bearDropper[$$]"
 # how often to attempt to expire bans when in follow mode
-uciLoad followModeCheckInterval 30m	
-uciLoad cmdLogread 'logread'		# for tuning, ex: "logread -l250"
-uciLoad formatLogDate '%b %e %H:%M:%S %Y'	# used to convert syslog dates
-uciLoad formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
+uciLoadVar followModeCheckInterval 30m	
+uciLoadVar cmdLogread 'logread'		# for tuning, ex: "logread -l250"
+uciLoadVar formatLogDate '%b %e %H:%M:%S %Y'	# used to convert syslog dates
+uciLoadVar formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
 
 # Begin functions
 #
@@ -107,19 +119,21 @@ unBanIP () {
 
 # Args: $1=IP
 banIP () {
-  local ip="$1"
+  local ip="$1" x chain position
   if ! iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
     logLine 1 "Creating iptables chain $firewallChain"
     iptables -N $firewallChain
   fi
-  if [ $firewallHookPosition -ge 0 ] ; then
-    if ! iptables -C $firewallHookChain -j $firewallChain 2>/dev/null ; then
-      logLine 1 "Inserting hook into iptables chain $firewallHookChain"
-      if [ $firewallHookPosition = 0 ] ; then
-        iptables -A $firewallHookChain -j $firewallChain
+  for x in $firewallHookChains ; do
+    chain="${x%:*}" ; position="${x#*:}"
+    if [ $position -ge 0 ] &&  ! iptables -C $chain -j $firewallChain 2>/dev/null ; then
+      logLine 1 "Inserting hook into iptables chain $chain"
+      if [ $position = 0 ] ; then
+        iptables -A $chain -j $firewallChain
       else
-        iptables -I $firewallHookChain $firewallHookPosition -j $firewallChain
-  fi ; fi ; fi
+        iptables -I $chain $position -j $firewallChain
+    fi ; fi 
+  done
   if ! iptables -C $firewallChain -s $ip -j "$firewallTarget" 2>/dev/null ; then
     logLine 1 "Inserting ban rule for IP $ip into iptables chain $firewallChain"
     iptables -A $firewallChain -s $ip -j "$firewallTarget"
@@ -129,11 +143,15 @@ banIP () {
 }
 
 wipeFirewall () {
-  if [ $firewallHookPosition -ge 0 ] ; then
-    if iptables -C $firewallHookChain -j $firewallChain 2>/dev/null ; then
-      logLine 1 "Removing hook from iptables chain $firewallHookChain"
-      iptables -D $firewallHookChain -j $firewallChain
-  fi ; fi
+  local x chain position
+  for x in $firewallHookChains ; do
+    chain="${x%:*}" ; position="${x#*:}"
+    if [ $position -ge 0 ] ; then
+      if iptables -C $chain -j $firewallChain 2>/dev/null ; then
+        logLine 1 "Removing hook from iptables chain $chain"
+        iptables -D $chain -j $firewallChain
+    fi ; fi
+  done
   if iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
     logLine 1 "Flushing and removing iptables chain $firewallChain"
     iptables -F $firewallChain 2>/dev/null
@@ -248,7 +266,7 @@ loadState () {
 
 printUsage () {
   cat <<-_EOF_
-	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-f ...] [-F #] [-l #] [-j ...] [-p #] [-P #] [-s ...]
+	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-f ...] [-l #] [-j ...] [-p #] [-P #] [-s ...]
 
 	  Running Modes (-m) (def: $defaultMode)
 	    follow     constantly monitors log
@@ -261,9 +279,8 @@ printUsage () {
 	    -a #   attempt count before banning (def: $attemptCount)
 	    -b #   ban length once attempts hit threshold (def: $banLength)
 	    -c ... firewall chain to record bans (def: $firewallChain)
-	    -C ... firewall chain to hook into (def: $firewallHookChain)
+	    -C ... firewall chains/positions to hook into (def: $firewallHookChains)
 	    -f ... log facility (syslog facility or stdout/stderr) (def: $logFacility)
-	    -F #   firewall chain hook position (def: $firewallHookPosition)
 	    -j ... firewall target (def: $firewallTarget)
 	    -l #   log level - 0=off, 1=standard, 2=verbose (def: $logLevel)
 	    -p #   attempt period which attempt counts must happen in (def: $attemptPeriod)
@@ -280,21 +297,20 @@ printUsage () {
 #  Begin main logic
 #
 unset logMode
-while getopts a:b:c:C:f:F:hj:l:m:p:P:s:t: arg ; do
+while getopts a:b:c:C:f:hj:l:m:p:P:s:t: arg ; do
   case "$arg" in 
-    a) attemptCount=$OPTARG ;;
-    b) banLength=$OPTARG ;;
-    c) firewallChain=$OPTARG ;;
-    C) firewallHookChain=$OPTARG ;;
-    f) logFacility=$OPTARG ;;
-    F) firewallHookPosition=$OPTARG ;;
-    j) firewallTarget=$OPTARG ;;
-    l) logLevel=$OPTARG ;;
-    m) logMode=$OPTARG ;;
-    p) attemptPeriod=$OPTARG ;;
-    P) persistentStateWritePeriod=$OPTARG ;;
-    s) fileStatePersistPrefix=$OPTARG ;;
-    s) fileStatePersistPrefix=$OPTARG ;;
+    a) attemptCount="$OPTARG" ;;
+    b) banLength="$OPTARG" ;;
+    c) firewallChain="$OPTARG" ;;
+    C) firewallHookChains="$OPTARG" ;;
+    f) logFacility="$OPTARG" ;;
+    j) firewallTarget="$OPTARG" ;;
+    l) logLevel="$OPTARG" ;;
+    m) logMode="$OPTARG" ;;
+    p) attemptPeriod="$OPTARG" ;;
+    P) persistentStateWritePeriod="$OPTARG" ;;
+    s) fileStatePersistPrefix="$OPTARG" ;;
+    s) fileStatePersistPrefix="$OPTARG" ;;
     *) printUsage
       exit 254
   esac
@@ -313,16 +329,14 @@ exitStatus=0
 
 # Here we convert the logRegex list into a sed -f file
 fileRegex="/tmp/bearDropper.$$.regex"
-uci get -d "
-" 'bearDropper.@[0].logRegex' | sed -e s/^\'// -e s/\'\$// > "$fileRegex"
-
+uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' '/ authpriv.warn dropbear\[/p' > "$fileRegex"
 lastPersistentStateWrite="`date +%s`"
 loadState
 bddbCheckStatusAll
 
 # main event loops
 if [ "$logMode" = follow ] ; then 
-  logLine 1 "Running in follow mode
+  logLine 1 "Running in follow mode"
   local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
   trap "rm -f "$tmpFile" "$fileRegex" ; exit " SIGINT
@@ -351,7 +365,7 @@ if [ "$logMode" = follow ] ; then
     fi
   done
 elif [ "$logMode" = entire ] ; then 
-  logLine 1 "Running in entire mode
+  logLine 1 "Running in entire mode"
   $cmdLogread | sed -nEf "$fileRegex" | while read line ; do 
     processLogLine "$line" 
     saveState
@@ -360,7 +374,7 @@ elif [ "$logMode" = entire ] ; then
   bddbCheckStatusAll
   saveState -f
 elif [ "$logMode" = today ] ; then 
-  logLine 1 "Running in today mode
+  logLine 1 "Running in today mode"
   # merge the egrep into sed with -e /^$formatTodayLogDateRegex/!d
   $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nEf "$fileRegex" | while read line ; do 
       processLogLine "$line" 

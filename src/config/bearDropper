@@ -38,12 +38,10 @@ config bearDropper
   # persistent state file prefix 
   	option	fileStatePersistPrefix 	/etc/bearDropper
 
-  # firewall chain to hook the chain containing ban rules into
-  # TBD: convert to list (?) for adding to forward rule
-  	option	firewallHookChain 	input_wan_rule
-
-  # position in firewall hook chain (-1 = don't add, 0 = append, 1+ = absolute position)
-  	option	firewallHookPosition 	1
+  # IPTables chains to add rules to, syntax is chain:position where
+  #   position is (-1 = don't add, 0 = append, 1+ = absolute position)
+        list    firewallHookChain       input_wan_rule:1
+        list    firewallHookChain       forwarding_wan_rule:1
 
   # target used for banned IPs - consider TARPIT/DELUDE
   	option	firewallTarget		DROP
