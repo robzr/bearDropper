@@ -273,7 +273,9 @@ bddbCheckStatusAll () {
       if [ $((lastTime + attemptPeriod)) -lt $now ] ; then
         bddbRemoveRecord $ip
     fi ; fi
+    saveState
   done
+  loadState
 }
 
 # Only used when status is already 0 and possibly going to 1, Args: $1=IP
