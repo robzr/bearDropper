@@ -331,7 +331,8 @@ exitStatus=0
 
 # Here we convert the logRegex list into a sed -f file
 fileRegex="/tmp/bearDropper.$$.regex"
-uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' '/ authpriv.warn dropbear\[/p' > "$fileRegex"
+uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' \
+  '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p' > "$fileRegex"
 lastPersistentStateWrite="`date +%s`"
 loadState
 bddbCheckStatusAll
