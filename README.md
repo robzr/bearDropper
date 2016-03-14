@@ -51,4 +51,5 @@ To install the latest bearDropper, run:
  - ipv6 support
 
 Also see the sister project sub2rbl for RBL based banning: https://github.com/robzr/sub2rbl
+
 Discussion of these projects at OpenWRT forums: https://forum.openwrt.org/viewtopic.php?id=62084
