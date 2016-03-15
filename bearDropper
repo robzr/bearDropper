@@ -209,7 +209,7 @@ unBanIP () {
 # Args: $1=IP
 banIP () {
   local ip="$1" x chain position
-  if ! iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
+  if ! iptables -nL $firewallChain >/dev/null 2>/dev/null ; then  
     logLine 1 "Creating iptables chain $firewallChain"
     iptables -N $firewallChain
   fi
@@ -241,7 +241,7 @@ wipeFirewall () {
         iptables -D $chain -j $firewallChain
     fi ; fi
   done
-  if iptables -L $firewallChain >/dev/null 2>/dev/null ; then  
+  if iptables -nL $firewallChain >/dev/null 2>/dev/null ; then  
     logLine 1 "Flushing and removing iptables chain $firewallChain"
     iptables -F $firewallChain 2>/dev/null
     iptables -X $firewallChain 2>/dev/null
