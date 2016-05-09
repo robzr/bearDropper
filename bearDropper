@@ -85,10 +85,10 @@ bddbClear () {
 # Returns count of unique IP entries in environment
 bddbCount () { set | egrep '^bddb_[0-9_]*=' | wc -l ; }
 
-# Loads existing bddb file into environment, Arg: $1 = file
+# Loads existing bddb file into environment
+# Arg: $1 = file, $2 = type (bddb/bddbz), $3 = 
 bddbLoad () { 
   local loadFile="$1.$2" fileType="$2"
-  bddbClear 
   if [ "$fileType" = bddb -a -f "$loadFile" ] ; then
     . "$loadFile"
   elif [ "$fileType" = bddbz -a -f "$loadFile" ] ; then
@@ -350,6 +350,7 @@ saveState () {
 }
 
 loadState () {
+  bddbClear
   bddbLoad "$fileStatePersistPrefix" "$fileStateType"
   bddbLoad "$fileStateTempPrefix" "$fileStateType"
   logLine 2 "loadState() loaded `bddbCount` entries"

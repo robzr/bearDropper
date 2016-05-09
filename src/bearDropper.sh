@@ -261,6 +261,7 @@ saveState () {
 }
 
 loadState () {
+  bddbClear
   bddbLoad "$fileStatePersistPrefix" "$fileStateType"
   bddbLoad "$fileStateTempPrefix" "$fileStateType"
   logLine 2 "loadState() loaded `bddbCount` entries"

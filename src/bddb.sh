@@ -2,15 +2,15 @@
 #
 # bearDropper DB - storage routines for ultralight IP/status/epoch storage
 #
-# A BDDB record format is: bddb_($IPADDR)=$STATE,$TIME[,$TIME...]
+# A BDDB record format is: bddb_$IPADDR=$STATE,$TIME[,$TIME...]
 #
 # Where: IPADDR has periods replaced with underscores
 #        TIME is in epoch-seconds
 #
 # A BDDB record has one of three STATES:
 #   bddb_1_2_3_4=-1                            (whitelisted IP or network)
-#   bddb_1_2_3_4=0,1452332535[,1452332536...]  (tracking, but not banned)
-#   bddb_1_2_3_4=1,1452332535`                 (banned, time=effective ban beginning)
+#   bddb_1_2_3_4=0,1452332535[,1452332536...]  (tracked, but not banned)
+#   bddb_1_2_3_4=1,1452332535                  (banned, time=effective ban start)
 #
 # BDDB records exist in RAM usually, but using bddbSave & bddbLoad, they are 
 # written on (ram)disk with optional compression 
@@ -31,10 +31,10 @@ bddbClear () {
 # Returns count of unique IP entries in environment
 bddbCount () { set | egrep '^bddb_[0-9_]*=' | wc -l ; }
 
-# Loads existing bddb file into environment, Arg: $1 = file
+# Loads existing bddb file into environment
+# Arg: $1 = file, $2 = type (bddb/bddbz), $3 = 
 bddbLoad () { 
   local loadFile="$1.$2" fileType="$2"
-  bddbClear 
   if [ "$fileType" = bddb -a -f "$loadFile" ] ; then
     . "$loadFile"
   elif [ "$fileType" = bddbz -a -f "$loadFile" ] ; then
@@ -133,7 +133,8 @@ bddbDump () {
 } 
 
 bddbFilePrefix=/tmp/bddbtest
-bddbFileType=bddbz
+#bddbFileType=bddbz
+bddbFileType=bddb
 
 echo seeding
 bddb_2_3_4_5=0,1442000000
@@ -149,6 +150,7 @@ bddbClear ; bddbDump
 echo environment has `bddbCount` entries
 
 echo loading
+bddbClear 
 bddbLoad "$bddbFilePrefix" "$bddbFileType"
 
 echo loaded `bddbCount` entries, dumping
@@ -171,6 +173,7 @@ echo clearing and dumping
 bddbClear ; bddbDump
 
 echo loading and dumping
+bddbClear 
 bddbLoad "$bddbFilePrefix" "$bddbFileType"
 bddbDump
 
