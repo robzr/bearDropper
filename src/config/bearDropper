@@ -54,6 +54,7 @@ config bearDropper
     list	logRegex '/has invalid shell, rejected$/d'	# delete (/d) - use to filter out
     # print (/p) - use to filter in 
     list	logRegex '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p'
+    list	logRegex '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth:.*/p'
 
   # whitelist entries do not work yet; as a temporary workaround, put in a firewall rule upstream
   #

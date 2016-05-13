@@ -70,6 +70,7 @@ uciLoadVar syslogTag "bearDropper[$$]"
 # how often to attempt to expire bans when in follow mode
 uciLoadVar followModeCheckInterval 30m	
 uciLoadVar cmdLogread 'logread'		# for tuning, ex: "logread -l250"
+uciLoadVar cmdLogreadEba 'logread'	# for "Exit before auth:" backscanning
 uciLoadVar formatLogDate '%b %e %H:%M:%S %Y'	# used to convert syslog dates
 uciLoadVar formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mode
 
@@ -194,7 +195,12 @@ getLogTime () {
 }
 
 # extra validation, fails safe. Args: $1=log line
-getLogIP () { echo "$1" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'; }
+getLogIP () { 
+  local logLine="$1"
+  local ebaPID=`echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth:.*/\1/p'`
+  [ -n "$ebaPID" ] && logLine=`$cmdLogreadEba | fgrep "${ebaPID} Child connection from "`
+  echo "$logLine" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'
+}
 
 # Args: $1=IP
 unBanIP () {
@@ -422,7 +428,8 @@ exitStatus=0
 # Here we convert the logRegex list into a sed -f file
 fileRegex="/tmp/bearDropper.$$.regex"
 uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' \
-  '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p' > "$fileRegex"
+  '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p' \
+  '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth:.*/p' > "$fileRegex"
 lastPersistentStateWrite="`date +%s`"
 loadState
 bddbCheckStatusAll
