@@ -14,7 +14,7 @@ None! Written entirely in busybox ash, uses all standard OpenWRT commands.
 
 **Installation**
 
-To install the latest bearDropper, run:
+To install or upgrade to the latest bearDropper, run:
 
 	wget -qO- http://rawgit.com/robzr/bearDropper/master/install.sh | sh
 
