@@ -16,3 +16,17 @@ echo -e 'Processing historical log data (this can take a while)'
 echo -e 'Starting background process'
 /etc/init.d/bearDropper enable
 /etc/init.d/bearDropper start
+
+dropbear_count=$(uci show dropbear | grep -c =dropbear)
+dropbear_count=$((dropbear_count - 1))
+for instance in $(seq 0 $dropbear_count); do
+  dropbear_verbose=$(uci -q get dropbear.@dropbear[$instance].verbose || echo 0)
+  if [ $dropbear_verbose -eq 0 ]; then
+    uci set dropbear.@dropbear[$instance].verbose=1 
+    dropbear_conf_updated=1
+  fi
+done
+if [ $dropbear_conf_updated ]; then
+  uci commit
+  echo "Verbose logging was configured for dropbear. Please restart the service to enable this change."
+fi
