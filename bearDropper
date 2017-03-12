@@ -437,11 +437,11 @@ bddbCheckStatusAll
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode"
-  local readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
+  readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
   trap "rm -f "$tmpFile" "$fileRegex" ; exit " SIGINT
   [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModeCheckInterval))
-  local firstRun=1
+  firstRun=1
   $cmdLogread -f | while read -t $followModeCheckInterval line || true ; do
     if [ $firstRun -eq 1 ] ; then
       trap "saveState -f" SIGHUP
@@ -455,7 +455,7 @@ if [ "$logMode" = follow ] ; then
     [ -n "$line" ] && processLogLine "$line"
     logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
-      local now="`date +%s`"
+      now="`date +%s`"
       if [ $((now - lastCheckAll)) -ge $followModeCheckInterval ] ; then
         bddbCheckStatusAll
         lastCheckAll="$now"
