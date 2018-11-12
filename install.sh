@@ -2,14 +2,33 @@
 # https://github.com/robzr/bearDropper
 # bearDropper install script - @robzr
 
+download_github_file () {
+  local output="$1" stub="$2"
+  local https_url="https://raw.githubusercontent.com/$stub"
+  local ca_bundle='/etc/ssl/certs/ca-certificates.crt'
+  if [[ -f "$ca_bundle" ]]; then
+    if [[ -x "$(command -v curl)" ]]; then
+      curl -Ls --cacert "$ca_bundle" --output "$output" -- "$https_url"; return $?
+    elif ldd "$(which wget)" | grep -qE 'tls|ssl|crypto' || \
+         ldd "$(which wget)" | grep -q 'uclient' && test -f /lib/libustream-ssl.so; then
+      wget -q --ca-certificate "$ca_bundle" -O "$output" -- "$https_url"; return $?
+    fi
+  else
+    # rawgit stopped providing HTTP downloads
+    return 1
+  fi
+}
+
 if [ -f /etc/init.d/bearDropper ] ; then
   echo Detected previous version of bearDropper - stopping
   /etc/init.d/bearDropper stop
 fi
 echo -e 'Retrieving and installing latest version'
-wget -qO /etc/init.d/bearDropper http://rawgit.com/robzr/bearDropper/master/src/init.d/bearDropper 
-wget -qO /etc/config/bearDropper http://rawgit.com/robzr/bearDropper/master/src/config/bearDropper
-wget -qO /usr/sbin/bearDropper http://rawgit.com/robzr/bearDropper/master/bearDropper
+(
+  download_github_file /etc/init.d/bearDropper robzr/bearDropper/master/src/init.d/bearDropper &&
+  download_github_file /etc/config/bearDropper robzr/bearDropper/master/src/config/bearDropper &&
+  download_github_file /usr/sbin/bearDropper robzr/bearDropper/master/bearDropper
+) || { echo 'Failed to download script' 1>&2; exit 1; }
 chmod 755 /usr/sbin/bearDropper /etc/init.d/bearDropper
 echo -e 'Processing historical log data (this can take a while)'
 /usr/sbin/bearDropper -m entire -f stdout
