@@ -101,7 +101,7 @@ logLine () {
 getLogTime () {
   local logDateString=`echo "$1" | sed -n \
     's/^[A-Z][a-z]* \([A-Z][a-z]*  *[0-9][0-9]*  *[0-9][0-9]*:[0-9][0-9]:[0-9][0-9] [0-9][0-9]*\) .*$/\1/p'`
-  date -d"$logDateString" -D"$formatLogDate" +%s || logLine 1 \
+  busybox date -d"$logDateString" -D"$formatLogDate" +%s || logLine 1 \
     "Error: logDateString($logDateString) malformed line ($1)"
 }
 
@@ -171,7 +171,7 @@ wipeFirewall () {
 # state db should be more resiliant than the firewall in practice.
 #
 bddbCheckStatusAll () {
-  local now=`date +%s`
+  local now=`busybox date +%s`
   bddbGetAllIPs | while read ip ; do
     if [ `bddbGetStatus $ip` -eq 1 ] ; then
       logLine 3 "bddbCheckStatusAll($ip) testing banLength:$banLength + bddbGetTimes:`bddbGetTimes $ip` vs. now:$now"
@@ -255,14 +255,14 @@ saveState () {
   if [ $bddbStateChange -gt 0 ] ; then
     logLine 3 "saveState() saving to temp state file"
     bddbSave "$fileStateTempPrefix" "$fileStateType"
-    logLine 3 "saveState() now=`date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
+    logLine 3 "saveState() now=`busybox date +%s` lPSW=$lastPersistentStateWrite pSWP=$persistentStateWritePeriod fP=$forcePersistent"
   fi    
   if [ $persistentStateWritePeriod -gt 1 ] || [ $persistentStateWritePeriod -eq 0 -a $forcePersistent -eq 1 ] ; then
-    if [ $((`date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent -eq 1 ] ; then
+    if [ $((`busybox date +%s` - lastPersistentStateWrite)) -ge $persistentStateWritePeriod ] || [ $forcePersistent -eq 1 ] ; then
       if [ ! -f "$fileStatePersist" ] || ! cmp -s "$fileStateTemp" "$fileStatePersist" ; then
         logLine 2 "saveState() writing to persistent state file"
         bddbSave "$fileStatePersistPrefix" "$fileStateType"
-        lastPersistentStateWrite="`date +%s`"
+        lastPersistentStateWrite="`busybox date +%s`"
   fi ; fi ; fi
 }
 
@@ -341,7 +341,7 @@ fileRegex="/tmp/bearDropper.$$.regex"
 uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' \
   '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p' \
   '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth:.*/p' > "$fileRegex"
-lastPersistentStateWrite="`date +%s`"
+lastPersistentStateWrite="`busybox date +%s`"
 loadState
 bddbCheckStatusAll
 
@@ -366,7 +366,7 @@ if [ "$logMode" = follow ] ; then
     [ -n "$line" ] && processLogLine "$line"
     logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
-      now="`date +%s`"
+      now="`busybox date +%s`"
       if [ $((now - lastCheckAll)) -ge $followModeCheckInterval ] ; then
         bddbCheckStatusAll
         lastCheckAll="$now"
@@ -387,7 +387,7 @@ elif [ "$logMode" = entire ] ; then
 elif [ "$logMode" = today ] ; then 
   logLine 1 "Running in today mode"
   # merge the egrep into sed with -e /^$formatTodayLogDateRegex/!d
-  $cmdLogread | egrep "`date +\'$formatTodayLogDateRegex\'`" | sed -nEf "$fileRegex" | while read line ; do 
+  $cmdLogread | egrep "`busybox date +\'$formatTodayLogDateRegex\'`" | sed -nEf "$fileRegex" | while read line ; do 
       processLogLine "$line" 
       saveState
     done
@@ -397,7 +397,7 @@ elif [ "$logMode" = today ] ; then
 elif isValidBindTime "$logMode" ; then
   logInterval=`expandBindTime $logMode`
   logLine 1 "Running in interval mode (reviewing $logInterval seconds of log entries)..."
-  timeStart=$((`date +%s` - logInterval))
+  timeStart=$((`busybox date +%s` - logInterval))
   $cmdLogread | sed -nEf "$fileRegex" | while read line ; do
     timeWhen=`getLogTime "$line"`
     [ $timeWhen -ge $timeStart ] && processLogLine "$line"
