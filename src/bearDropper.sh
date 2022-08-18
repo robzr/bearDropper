@@ -108,7 +108,7 @@ getLogTime () {
 # extra validation, fails safe. Args: $1=log line
 getLogIP () { 
   local logLine="$1"
-  local ebaPID=`echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth:.*/\1/p'`
+  local ebaPID=`echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth.*/\1/p'`
   [ -n "$ebaPID" ] && logLine=`$cmdLogreadEba | fgrep "${ebaPID} Child connection from "`
   echo "$logLine" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'
 }
@@ -340,7 +340,7 @@ exitStatus=0
 fileRegex="/tmp/bearDropper.$$.regex"
 uciLoad logRegex 's/[`$"'\\\'']//g' '/has invalid shell, rejected$/d' \
   '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p' \
-  '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth:.*/p' > "$fileRegex"
+  '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth.*/p' > "$fileRegex"
 lastPersistentStateWrite="`date +%s`"
 loadState
 bddbCheckStatusAll
